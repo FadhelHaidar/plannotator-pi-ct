@@ -1,19 +1,21 @@
 # Plannotator Pi CT extension
 
-Standalone Plannotator integration for the [Pi coding agent](https://github.com/earendil-works/pi), distributed from **FadhelHaidar/plannotator-pi-ct** as `@plannotator/pi-extension`. It retains browser plan review, annotations, code/PR review, the three-mode compact tracker and **Alt+P** plan-mode shortcut from the `compact-plan-tracker` fork.
+Standalone Plannotator integration for the [Pi coding agent](https://github.com/earendil-works/pi), published as **`@fadhelhaidar/plannotator-pi-ct`** and as a prebuilt release from **FadhelHaidar/plannotator-pi-ct**. It retains browser plan review, annotations, code/PR review, the three-mode compact tracker and **Alt+P** plan-mode shortcut from the `compact-plan-tracker` fork.
 
 ## Install, update and remove
 
 The prebuilt GitHub Release needs no Bun or local browser build:
 
 ```bash
-pi install 'npm:@plannotator/pi-extension@https://github.com/FadhelHaidar/plannotator-pi-ct/releases/latest/download/plannotator-pi-extension.tgz'
+pi install npm:@fadhelhaidar/plannotator-pi-ct
+# Or install the prebuilt GitHub Release:
+pi install 'npm:@fadhelhaidar/plannotator-pi-ct@https://github.com/FadhelHaidar/plannotator-pi-ct/releases/latest/download/plannotator-pi-extension.tgz'
 pi update --extensions
 # Restart Pi or /reload after updating.
-pi remove 'npm:@plannotator/pi-extension@https://github.com/FadhelHaidar/plannotator-pi-ct/releases/latest/download/plannotator-pi-extension.tgz'
+pi remove npm:@fadhelhaidar/plannotator-pi-ct
 ```
 
-Keep the exact named `npm:@plannotator/pi-extension@` prefix. Plain `npm:@plannotator/pi-extension` installs upstream, not CT. Pi does not poll GitHub for releases; a plain `pi update` updates Pi itself. The independent release series uses `ct-vX.Y.Z`; the first standalone version is `0.1.1`, following the old fork's `0.1.0`.
+The independent release series uses `vX.Y.Z`; the first standalone version is `0.1.1`, following the old fork's `0.1.0`. Both npm and GitHub Release artifacts use the fork-scoped package identity.
 
 **Migration:** remove your old configured source (old fork release URL, upstream npm source, git source or local path) before installing this one. Use `pi list` to inspect sources and remove any manually loaded old extension paths too. For the old fork URL:
 
@@ -110,7 +112,7 @@ Control it with:
 Other Pi extensions can enter, exit, toggle, or query Plannotator plan mode through the shared Pi event bus without invoking the `/plannotator-plan-mode` slash command:
 
 ```ts
-import { PLANNOTATOR_REQUEST_CHANNEL } from "@plannotator/pi-extension/plannotator-events";
+import { PLANNOTATOR_REQUEST_CHANNEL } from "@fadhelhaidar/plannotator-pi-ct/plannotator-events";
 
 const response = await new Promise((resolve) => {
   pi.events.emit(PLANNOTATOR_REQUEST_CHANNEL, {
@@ -276,7 +278,7 @@ After approval, Plannotator returns to idle and emits `plannotator:plan-approved
 Companion extensions can subscribe through the shared event bus:
 
 ```ts
-import { PLANNOTATOR_PLAN_APPROVED_CHANNEL } from "@plannotator/pi-extension/plannotator-events";
+import { PLANNOTATOR_PLAN_APPROVED_CHANNEL } from "@fadhelhaidar/plannotator-pi-ct/plannotator-events";
 import { resolve } from "node:path";
 
 pi.events.on(PLANNOTATOR_PLAN_APPROVED_CHANNEL, (event) => {

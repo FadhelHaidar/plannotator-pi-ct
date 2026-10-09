@@ -28,7 +28,7 @@ test('stable SemVer increments, including zero-major breaking changes', () => {
 });
 
 function repository(run) {
-  const cwd = mkdtempSync(join(tmpdir(), 'ct-version-test-'));
+  const cwd = mkdtempSync(join(tmpdir(), 'release-version-test-'));
   const git = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   const output = join(cwd, 'github-output');
   const version = () => {
@@ -40,7 +40,7 @@ function repository(run) {
   };
   try {
     git('init', '-b', 'main');
-    git('config', 'user.name', 'CT release fixture');
+    git('config', 'user.name', 'release fixture');
     git('config', 'user.email', 'fixture@example.invalid');
     mkdirSync(join(cwd, 'apps/pi-extension'), { recursive: true });
     writeFileSync(join(cwd, 'apps/pi-extension/package.json'), '{"version":"0.1.1"}\n');
@@ -57,14 +57,14 @@ test('a tag-free main bootstraps the checked-in standalone 0.1.1 version', () =>
 }));
 
 test('maintenance and already-tagged main do not release', () => repository((git, version) => {
-  git('tag', 'ct-v0.1.1');
+  git('tag', 'v0.1.1');
   assert.equal(version(), 'version=');
   git('commit', '--allow-empty', '-m', 'docs: explain installation');
   assert.equal(version(), 'version=');
 }));
 
 test('the whole main range picks the highest Conventional Commit bump', () => repository((git, version) => {
-  git('tag', 'ct-v0.1.1');
+  git('tag', 'v0.1.1');
   git('commit', '--allow-empty', '-m', 'fix: correct packaging');
   assert.equal(version(), 'version=0.1.2');
   git('commit', '--allow-empty', '-m', 'feat(ui): add review behavior');
@@ -73,8 +73,8 @@ test('the whole main range picks the highest Conventional Commit bump', () => re
   assert.equal(version(), 'version=1.0.0');
 }));
 
-test('CT tags are numerically ordered and upstream tags do not select the baseline', () => repository((git, version) => {
-  for (const tag of ['v99.0.0', 'ct-v0.1.9', 'ct-v0.1.10', 'ct-v0.1.11-beta.1']) git('tag', tag);
+test('release tags are numerically ordered and foreign tags do not select the baseline', () => repository((git, version) => {
+  for (const tag of ['pi-v0.29.0', 'v0.1.9', 'v0.1.10', 'v0.1.11-beta.1']) git('tag', tag);
   git('commit', '--allow-empty', '-m', 'perf: reduce load overhead');
   assert.equal(version(), 'version=0.1.11');
 }));

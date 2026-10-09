@@ -5,7 +5,7 @@ import type { Origin } from '@plannotator/core/agents';
 import { isWindows } from '../utils/platform';
 import { copyTextToClipboard } from '../utils/clipboard';
 
-const PI_INSTALL_COMMAND = 'pi install npm:@plannotator/pi-extension';
+const PI_INSTALL_COMMAND = 'pi install npm:@fadhelhaidar/plannotator-pi-ct';
 
 function getInstallCommand(origin?: Origin | null, isWSL = false): string {
   if (origin === 'pi') return PI_INSTALL_COMMAND;

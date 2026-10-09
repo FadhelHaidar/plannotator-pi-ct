@@ -1,6 +1,6 @@
 # Plannotator Pi CT
 
-A standalone [Pi coding agent](https://github.com/earendil-works/pi) extension with Plannotator's browser plan review, annotations, code/PR review, and the compact execution tracker. Package identity stays **`@plannotator/pi-extension`**; this repository distributes its own prebuilt GitHub Release tarball, not a new npm package.
+A standalone [Pi coding agent](https://github.com/earendil-works/pi) extension with Plannotator's browser plan review, annotations, code/PR review, and the compact execution tracker. This fork publishes as **`@fadhelhaidar/plannotator-pi-ct`**, separately from upstream, and ships both an npm package and a prebuilt GitHub Release tarball.
 
 The inherited UI and runtime are retained, including plan revisions/diffs, markdown/HTML/live-app/folder/bundle annotations, drafts, diagram/question comments, review highlighting workers, AI/session bridges, guide sharing, themes/settings and external review engines. This extraction changes packaging, build scope and releases, not those features.
 
@@ -9,23 +9,28 @@ The inherited UI and runtime are retained, including plan revisions/diffs, markd
 Requires **Pi 0.79.1 or newer** and its supported Node runtime. No Bun, source checkout or browser build is needed:
 
 ```bash
-pi install 'npm:@plannotator/pi-extension@https://github.com/FadhelHaidar/plannotator-pi-ct/releases/latest/download/plannotator-pi-extension.tgz'
+pi install npm:@fadhelhaidar/plannotator-pi-ct
+# Or install the prebuilt GitHub Release tarball:
+pi install 'npm:@fadhelhaidar/plannotator-pi-ct@https://github.com/FadhelHaidar/plannotator-pi-ct/releases/latest/download/plannotator-pi-extension.tgz'
 ```
 
-Keep the exact `npm:@plannotator/pi-extension@` prefix: Pi needs the package identity when installing a tarball URL. The URL only becomes usable after the first release is published. `pi install npm:@plannotator/pi-extension` installs **upstream**, not this CT distribution.
+The npm package and GitHub tarball both use the fork identity `@fadhelhaidar/plannotator-pi-ct`; the unscoped upstream package is not replaced.
 
 Update configured extensions after a release:
 
 ```bash
 pi update --extensions
 # Or update only this source:
-pi update 'npm:@plannotator/pi-extension@https://github.com/FadhelHaidar/plannotator-pi-ct/releases/latest/download/plannotator-pi-extension.tgz'
+pi update npm:@fadhelhaidar/plannotator-pi-ct
+# Or update the tarball source:
+pi update 'npm:@fadhelhaidar/plannotator-pi-ct@https://github.com/FadhelHaidar/plannotator-pi-ct/releases/latest/download/plannotator-pi-extension.tgz'
 ```
 
 Restart Pi or run `/reload`. Pi does not poll this repository for releases; a plain `pi update` updates Pi itself, not extensions. To remove this distribution, use the same source string:
 
 ```bash
-pi remove 'npm:@plannotator/pi-extension@https://github.com/FadhelHaidar/plannotator-pi-ct/releases/latest/download/plannotator-pi-extension.tgz'
+pi remove npm:@fadhelhaidar/plannotator-pi-ct
+# For the tarball source, use its exact configured URL instead.
 ```
 
 ### Migrate from the old fork or upstream
@@ -102,11 +107,11 @@ bun run smoke:discovery            # isolated Pi install/load/remove smoke, no m
 
 Native dependencies may require allowed npm lifecycle scripts (notably WebTUI's `node-pty`); npm versions that block scripts need explicit approval under their own policy. SDK/CLI availability, credentials, git/jj/GitButler, platform browser/native tools and network-hosted services still govern optional capabilities. Automated tests skip JJ cases when `jj` is absent and DOM cases unless enabled. Timing-sensitive server suites can require `bun test --timeout 15000 apps/pi-extension` on busy machines. See [tests/UI-TESTING.md](tests/UI-TESTING.md) for manual UI parity coverage. Passing package/discovery tests does not attest full interactive browser or external-provider parity.
 
-## CT releases and publication bootstrap
+## Releases and publication bootstrap
 
-This is an independent **`ct-vX.Y.Z`** release series. The old fork's last CT version was `0.1.0`; this standalone tree starts at **`0.1.1`**. Upstream version numbers are not used. Root/Pi manifest versions are set in the build workspace so both browser assets carry the release version.
+This is an independent **`vX.Y.Z`** release series. The old fork's last CT version was `0.1.0`; this standalone tree starts at **`0.1.1`**. Upstream version numbers are not used. Root/Pi manifest versions are set in the build workspace so both browser assets carry the release version.
 
-`.github/workflows/pi-extension-release.yml` runs on `main`. With **no CT tags**, the first push bootstraps a release at the checked-in Pi version (`0.1.1`). After that it inspects non-merge commit messages since the highest stable CT tag and uses the highest Conventional Commit bump:
+`.github/workflows/test.yml` builds and validates pushes to branches and pull requests using Node 22 and Bun 1.3.14. `.github/workflows/pi-extension-release.yml` runs on pushes to `main` and repeats the release-critical checks before publishing. With **no release tags**, the first push bootstraps a release at the checked-in Pi version (`0.1.1`). After that it inspects non-merge commit messages since the highest stable release tag and uses the highest Conventional Commit bump:
 
 | Commit | Bump |
 | --- | --- |
@@ -115,14 +120,15 @@ This is an independent **`ct-vX.Y.Z`** release series. The old fork's last CT ve
 | conventional header with `!` or `BREAKING CHANGE:` / `BREAKING-CHANGE:` footer | major (including `0.x`) |
 | `chore`, `docs`, `test`, `ci`, `build`, `style`, `refactor`, other maintenance | no release |
 
-The workflow builds from source, tests Pi/typecheck/extraction seams, packs the extension, checks the archive and isolated discovery, and uploads **`plannotator-pi-extension.tgz`** to a stable GitHub Release tagged `ct-v<version>`. It does not publish to npm or commit version churn back to main. Keep CT release tags on main history; checked-in versions are the first-release baseline, not the authoritative latest released version.
+The release workflow builds from source, tests Pi/typecheck/extraction seams, packs the extension, checks the archive and isolated discovery, then publishes the same versioned package to npm as `@fadhelhaidar/plannotator-pi-ct` and uploads **`plannotator-pi-extension.tgz`** to a stable GitHub Release tagged `v<version>`. It does not commit version churn back to main. Keep release tags on main history; checked-in versions are the first-release baseline, not the authoritative latest released version.
 
 For the repository owner (not performed by extraction):
 
 1. Create the dedicated GitHub repository, set default branch `main`, and add its remote to this independent local repository.
-2. Enable Actions and permit `GITHUB_TOKEN` to create releases (`contents: write` is scoped to the publish job). Ensure third-party actions are allowed by your organization policy.
-3. Push `main` **without precreating `ct-v0.1.1`** or importing old CT tags. The no-tag bootstrap creates the first release; pre-tagging the same commit would leave no release-worthy commits.
-4. Review the successful workflow and first release/tarball, then test the exact named install URL. Subsequent release-worthy main commits advance the CT series; maintenance-only ranges do not release.
+2. Enable Actions, permit `GITHUB_TOKEN` to create releases (`contents: write` is scoped to the release job), and allow third-party actions per your organization policy. npm publishing needs **no token**: the `publish-npm` job authenticates with npm trusted publishing (GitHub OIDC). Register the trusted publisher on npmjs.com for `@fadhelhaidar/plannotator-pi-ct`: GitHub Actions, repository `FadhelHaidar/plannotator-pi-ct`, workflow `pi-extension-release.yml`.
+3. Publish the first version once by hand (`npm publish` from `apps/pi-extension`), because npm cannot create a brand-new package through OIDC — the trusted publisher is configured on a package that already exists.
+4. Push `main` **without precreating `v0.1.1`** or importing old CT tags. The no-tag bootstrap targets the checked-in Pi version (`0.1.1`); if npm already has that version the workflow skips the npm publish and reports it, and pre-tagging the same commit would leave no release-worthy commits.
+5. Review the successful workflow, npm package and first release/tarball, then test both install sources. Subsequent release-worthy main commits advance the version series and publish through OIDC; maintenance-only ranges do not release.
 
 No remote, push, settings change or publication is part of this local extraction.
 

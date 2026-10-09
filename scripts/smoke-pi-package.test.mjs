@@ -12,7 +12,7 @@ function fixture(run) {
     writeFileSync(join(root, file), text);
   };
   try {
-    put('package.json', JSON.stringify({ name: '@plannotator/pi-extension', pi: { extensions: ['./index.ts'] }, dependencies: {} }));
+    put('package.json', JSON.stringify({ name: '@fadhelhaidar/plannotator-pi-ct', pi: { extensions: ['./index.ts'] }, dependencies: {} }));
     for (const file of ['index.ts', 'server.ts', 'server/serverAnnotate.ts', 'server/serverReview.ts', 'progress-widget.ts', 'auto-keymap.ts', 'skills/plannotator/SKILL.md', 'generated/call-flow-runtime/package.json', 'generated/call-flow-runtime/package-lock.json', 'LICENSE-MIT', 'LICENSE-APACHE', 'NOTICE']) put(file);
     mkdirSync(join(root, 'generated/call-flow-runtime/packs'));
     for (const file of ['plannotator.html', 'review-editor.html']) put(file, '<html>' + ' '.repeat(1_000_001) + '</html>');

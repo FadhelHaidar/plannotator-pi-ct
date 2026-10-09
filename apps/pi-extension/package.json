@@ -1,5 +1,5 @@
 {
-  "name": "@plannotator/pi-extension",
+  "name": "@fadhelhaidar/plannotator-pi-ct",
   "version": "0.1.1",
   "type": "module",
   "description": "Plannotator Pi extension - interactive plan review with annotations, annotate agent messages, and review code/PRs",

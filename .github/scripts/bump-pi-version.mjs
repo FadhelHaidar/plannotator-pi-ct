@@ -24,12 +24,12 @@ export function bumpVersion(version, bump) {
 }
 
 function main() {
-  const tags = execFileSync('git', ['tag', '--list', 'ct-v*'], { encoding: 'utf8' })
+  const tags = execFileSync('git', ['tag', '--list', 'v*'], { encoding: 'utf8' })
     .trim().split('\n').filter(Boolean)
-    .map((tag) => ({ tag, version: tag.match(/^ct-v(\d+\.\d+\.\d+)$/)?.[1] }))
+    .map((tag) => ({ tag, version: tag.match(/^v(\d+\.\d+\.\d+)$/)?.[1] }))
     .filter(({ version }) => version)
     .sort((a, b) => a.version.localeCompare(b.version, undefined, { numeric: true }));
-  // A new standalone repository has no inherited tags. Its checked-in CT
+  // A new standalone repository has no release tags. Its checked-in
   // version is the first artifact; later releases use Conventional Commits.
   if (!tags.length) {
     const { version } = JSON.parse(readFileSync('apps/pi-extension/package.json', 'utf8'));
