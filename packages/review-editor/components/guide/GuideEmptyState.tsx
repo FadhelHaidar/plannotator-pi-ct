@@ -4,13 +4,8 @@ import type { AgentCapabilities } from '@plannotator/ui/types';
 import { GUIDE_EXTRA_INSTRUCTIONS_MAX_CHARS } from '@plannotator/shared/guide';
 import type { SavedGuideListEntry } from '@plannotator/shared/guide';
 import type { AgentLaunchParams } from '@plannotator/ui/hooks/useAgentJobs';
-import type { ReviewEngine } from '@plannotator/ui/hooks/useAgentSettings';
-import { PI_THINKING, REVIEW_ENGINE_LABEL } from '@plannotator/ui/components/AgentsTab';
-// Claude/Codex options come from the same discovered catalogs AgentsTab and
-// Ask AI use (useGuideLaunch → useModelCatalogs).
-import { effortSelectOptions, modelSelectOptions } from '@plannotator/ui/hooks/useModelCatalogs';
+import { PI_THINKING } from '@plannotator/ui/components/AgentsTab';
 import { groupModelOptions, labelWithinGroup, SEARCHABLE_THRESHOLD } from '@plannotator/ui/components/AgentControls';
-import { ModelSourceHint } from '@plannotator/ui/components/ModelSourceHint';
 import { useGuideLaunch } from '../../hooks/guide/useGuideLaunch';
 
 type Option = { value: string; label: string };
@@ -170,23 +165,7 @@ export const GuideEmptyState: React.FC<GuideEmptyStateProps> = ({ capabilities, 
   // "Regenerate" hint via useGuideLaunch — this component keeps only the
   // picker UI on top of it.
   const launch = useGuideLaunch(capabilities);
-  const {
-    guideClaudeModel,
-    guideClaudeEffort,
-    guideCodexModel,
-    guideCodexReasoning,
-    guidePiThinking,
-    setGuideEngine,
-    setGuideClaudeModel,
-    setGuideClaudeEffort,
-    setGuideCodexModel,
-    setGuideCodexReasoning,
-    setGuideCursorModel,
-    setGuideOpencodeModel,
-    setGuidePiModel,
-    setGuidePiThinking,
-    setGuideCopilotModel,
-  } = launch.settings;
+  const { guidePiThinking, setGuidePiModel, setGuidePiThinking } = launch.settings;
 
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
@@ -350,40 +329,8 @@ export const GuideEmptyState: React.FC<GuideEmptyStateProps> = ({ capabilities, 
     }
   };
 
-  const {
-    guideAvailable,
-    availableEngines,
-    engine,
-    cursorOptions,
-    opencodeOptions,
-    piOptions,
-    copilotOptions,
-    effectiveCursorModel,
-    effectiveOpencodeModel,
-    effectivePiModel,
-    effectiveCopilotModel,
-  } = launch;
-
-  const { catalogs } = launch;
-  // While the engine's catalog settles, show a loading entry instead of an
-  // empty picker (Generate is held until it does).
-  const loadingPicker = { value: '', options: [{ value: '', label: 'Loading models…' }], onChange: () => {} };
-  const modelPicker: { value: string; options: Option[]; onChange: (v: string) => void } =
-    engine === 'claude'
-      ? catalogs.claude.settled
-        ? { value: guideClaudeModel, options: modelSelectOptions(catalogs.claude.models, guideClaudeModel), onChange: setGuideClaudeModel }
-        : loadingPicker
-      : engine === 'codex'
-        ? catalogs.codex.settled
-          ? { value: guideCodexModel, options: modelSelectOptions(catalogs.codex.models, guideCodexModel), onChange: setGuideCodexModel }
-          : loadingPicker
-        : engine === 'cursor'
-          ? { value: effectiveCursorModel, options: cursorOptions, onChange: setGuideCursorModel }
-          : engine === 'opencode'
-            ? { value: effectiveOpencodeModel, options: opencodeOptions, onChange: setGuideOpencodeModel }
-            : engine === 'copilot'
-              ? { value: effectiveCopilotModel, options: copilotOptions, onChange: setGuideCopilotModel }
-              : { value: effectivePiModel, options: piOptions, onChange: setGuidePiModel };
+  const { guideAvailable, availableEngines, piOptions, effectivePiModel } = launch;
+  const modelPicker = { value: effectivePiModel, options: piOptions, onChange: setGuidePiModel };
 
   const canLaunch = launch.canLaunch && !launching;
 
@@ -469,7 +416,7 @@ export const GuideEmptyState: React.FC<GuideEmptyStateProps> = ({ capabilities, 
 
       {!guideAvailable || availableEngines.length === 0 ? (
         <p className="mt-8 text-xs text-muted-foreground/70">
-          Guided review needs an agent CLI (Claude, Codex, Cursor, OpenCode, Pi, or Copilot) available on this machine.
+          Guided review needs Pi available on this machine.
         </p>
       ) : (
         <>
@@ -478,32 +425,11 @@ export const GuideEmptyState: React.FC<GuideEmptyStateProps> = ({ capabilities, 
               Model defaults
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <InlinePicker
-                label="Engine"
-                value={engine}
-                options={availableEngines.map((e) => ({ value: e, label: REVIEW_ENGINE_LABEL[e] }))}
-                onChange={(v) => setGuideEngine(v as ReviewEngine)}
-              />
               <InlinePicker label="Model" {...modelPicker} />
-              {engine === 'claude' && effortSelectOptions(catalogs.claude.models, guideClaudeModel).length > 0 && (
-                <InlinePicker label="Effort" value={guideClaudeEffort} options={effortSelectOptions(catalogs.claude.models, guideClaudeModel)} onChange={setGuideClaudeEffort} />
-              )}
-              {engine === 'codex' && effortSelectOptions(catalogs.codex.models, guideCodexModel).length > 0 && (
-                <InlinePicker label="Reasoning" value={guideCodexReasoning} options={effortSelectOptions(catalogs.codex.models, guideCodexModel)} onChange={setGuideCodexReasoning} />
-              )}
-              {engine === 'pi' && (
-                <InlinePicker label="Thinking" value={guidePiThinking} options={PI_THINKING} onChange={setGuidePiThinking} />
-              )}
+              <InlinePicker label="Thinking" value={guidePiThinking} options={PI_THINKING} onChange={setGuidePiThinking} />
             </div>
-            {(engine === 'claude' || engine === 'codex') && catalogs[engine].settled && (
-              <ModelSourceHint
-                tool={engine}
-                info={catalogs[engine]}
-                className="mt-2.5 text-[11px] leading-snug text-muted-foreground/60"
-              />
-            )}
             <p className="mt-2.5 text-[11px] leading-snug text-muted-foreground/60">
-              Newer models with lower effort are recommended — guides generate quicker.
+              Pi generates the guide using its configured model and thinking level.
             </p>
           </div>
 

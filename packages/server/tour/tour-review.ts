@@ -1,12 +1,18 @@
-import { dirname, join } from "node:path";
-import { tmpdir } from "node:os";
-import { mkdir, writeFile, readFile, unlink } from "node:fs/promises";
-import { getPlannotatorDataDir } from "@plannotator/shared/data-dir";
 import type { DiffType } from "../vcs";
 import { getPRPlatformCapabilities, type PRMetadata } from "../pr";
 import { buildWorkspacePromptContextLines, getLocalDiffInstruction, type WorkspaceReviewPromptContext } from "../agent-review-message";
-import { claudeJobIsolationArgs, claudeJobToolArgs, findClaudeStructuredOutput, type ClaudeJobCommandOptions } from "../claude-review";
-import { loadConfig, resolveClaudeSandbox } from "../config";
+import {
+  buildMarkerCommand,
+  extractLastMarkerBlock,
+  extractMarkerNonce,
+  makeMarkerNonce,
+  markerClose,
+  markerOpen,
+  MARKER_ENGINES,
+  reduceMarkerStream,
+  type MarkerEngine,
+  type MarkerEngineId,
+} from "../marker-review";
 import type {
   CodeTourOutput,
   TourDiffAnchor,
@@ -84,6 +90,24 @@ export const TOUR_SCHEMA_JSON = JSON.stringify({
   required: ["title", "greeting", "intent", "before", "after", "key_takeaways", "stops", "qa_checklist"],
   additionalProperties: false,
 });
+
+/** Marker contract for Pi: Pi has no schema flag, so the JSON schema is
+ *  embedded in the prompt inside the nonce-tagged marker block (same shape as
+ *  the guide's marker contract). */
+function buildTourMarkerOutputContract(nonce: string): string {
+  return `## Output contract
+Your only machine-readable output is a single marker-delimited JSON block
+matching the tour schema below. Any natural-language commentary you write
+must come BEFORE the final marker block. Emit the block exactly once, as the
+last thing in your response. The opening and closing tags carry a session id
+(after the colon) — reproduce both tags EXACTLY as shown, including that id,
+or your tour will be discarded:
+
+${markerOpen(nonce)}
+${JSON.stringify(JSON.parse(TOUR_SCHEMA_JSON), null, 2)}
+${markerClose(nonce)}
+`;
+}
 
 export const TOUR_REVIEW_PROMPT = `# Code Tour Narrator
 
@@ -377,109 +401,59 @@ function buildWorkspaceTourUserMessage(
   ].join("\n");
 }
 
-export interface TourClaudeCommandResult {
-  command: string[];
-  stdinPrompt: string;
+/**
+ * Parse a marker engine's NDJSON stdout into a validated tour output.
+ *
+ * Pipeline: line-buffered NDJSON reduce → reconstruct canonical text → take the
+ * LAST complete marker block (nonce-scoped) → JSON.parse → shape-check
+ * (non-empty stops array). Returns null on ANY failure so the caller fails the
+ * job (same fail-closed discipline as the guide/review marker paths).
+ */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function buildTourClaudeCommand(
-  prompt: string,
-  model: string = "sonnet",
-  effort?: string,
-  opts?: ClaudeJobCommandOptions,
-): TourClaudeCommandResult {
-  return {
-    command: [
-      "claude", "-p",
-      "--permission-mode", "dontAsk",
-      "--output-format", "stream-json",
-      "--verbose",
-      "--json-schema", TOUR_SCHEMA_JSON,
-      "--no-session-persistence",
-      "--model", model,
-      ...(effort ? ["--effort", effort] : []),
-      ...claudeJobToolArgs(),
-      ...claudeJobIsolationArgs(opts),
-    ],
-    stdinPrompt: prompt,
-  };
+function hasOnlyKeys(value: Record<string, unknown>, keys: string[]): boolean {
+  return Object.keys(value).every((key) => keys.includes(key));
 }
 
-/** Materialized schema path under the current data directory. */
-function tourSchemaPath(): string {
-  return join(getPlannotatorDataDir(), "tour-schema.json");
+function isTourOutput(value: unknown): value is CodeTourOutput {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["title", "greeting", "intent", "before", "after", "key_takeaways", "stops", "qa_checklist"])) return false;
+  if (!["title", "greeting", "intent", "before", "after"].every((key) => typeof value[key] === "string")) return false;
+  if (!Array.isArray(value.key_takeaways) || !value.key_takeaways.every((item) =>
+    isRecord(item) && hasOnlyKeys(item, ["text", "severity"]) && typeof item.text === "string" &&
+    (item.severity === "info" || item.severity === "important" || item.severity === "warning"),
+  )) return false;
+
+  const stops = value.stops;
+  if (!Array.isArray(stops) || stops.length === 0 || !stops.every((stop) =>
+    isRecord(stop) && hasOnlyKeys(stop, ["title", "gist", "detail", "transition", "anchors"]) &&
+    ["title", "gist", "detail", "transition"].every((key) => typeof stop[key] === "string") &&
+    Array.isArray(stop.anchors) && stop.anchors.every((anchor) =>
+      isRecord(anchor) && hasOnlyKeys(anchor, ["file", "line", "end_line", "hunk", "label"]) &&
+      typeof anchor.file === "string" && Number.isInteger(anchor.line) && Number.isInteger(anchor.end_line) &&
+      typeof anchor.hunk === "string" && typeof anchor.label === "string",
+    ),
+  )) return false;
+  return Array.isArray(value.qa_checklist) && value.qa_checklist.every((item) =>
+    isRecord(item) && hasOnlyKeys(item, ["question", "stop_indices"]) && typeof item.question === "string" &&
+    Array.isArray(item.stop_indices) && item.stop_indices.every((index) =>
+      typeof index === "number" && Number.isInteger(index) && index >= 0 && index < stops.length,
+    ),
+  );
 }
 
-/** Schema paths this process has already refreshed with its own schema. */
-const materializedTourSchemaPaths = new Set<string>();
+export function parseTourMarkerOutput(stdout: string, engine: MarkerEngine, nonce: string): CodeTourOutput | null {
+  if (!stdout || !stdout.trim() || !nonce) return null;
+  const { canonicalText } = reduceMarkerStream(stdout, engine);
+  if (!canonicalText) return null;
+  const block = extractLastMarkerBlock(canonicalText, markerOpen(nonce), markerClose(nonce));
+  if (block === null) return null;
 
-async function ensureTourSchemaFile(): Promise<string> {
-  const schemaPath = tourSchemaPath();
-  // Guarded per resolved path, not per process and not by file existence: a
-  // PLANNOTATOR_DATA_DIR change after import materializes the schema in the
-  // new location, and a stale file left by an older binary is overwritten
-  // once per process so the agent always gets the current schema.
-  if (!materializedTourSchemaPaths.has(schemaPath)) {
-    await mkdir(dirname(schemaPath), { recursive: true });
-    await writeFile(schemaPath, TOUR_SCHEMA_JSON);
-    materializedTourSchemaPaths.add(schemaPath);
-  }
-  return schemaPath;
-}
-
-export function generateTourOutputPath(): string {
-  return join(tmpdir(), `plannotator-tour-${crypto.randomUUID()}.json`);
-}
-
-export async function buildTourCodexCommand(options: {
-  cwd: string;
-  outputPath: string;
-  prompt: string;
-  model?: string;
-  reasoningEffort?: string;
-  fastMode?: boolean;
-}): Promise<string[]> {
-  const { cwd, outputPath, prompt, model, reasoningEffort, fastMode } = options;
-  const schemaPath = await ensureTourSchemaFile();
-
-  const command = [
-    "codex",
-    // Global flags must precede the "exec" subcommand for the Codex CLI.
-    ...(model ? ["-m", model] : []),
-    ...(reasoningEffort ? ["-c", `model_reasoning_effort=${reasoningEffort}`] : []),
-    ...(fastMode ? ["-c", "service_tier=fast"] : []),
-    "exec",
-    "--output-schema", schemaPath,
-    "-o", outputPath,
-    "--approve-for-me", "--ephemeral",
-    "-C", cwd,
-    prompt,
-  ];
-
-  return command;
-}
-
-export function parseTourStreamOutput(stdout: string): CodeTourOutput | null {
-  // A tour with no stops isn't a tour — treat as invalid so the UI error state
-  // fires instead of rendering an empty walkthrough.
-  return findClaudeStructuredOutput(stdout, (output) => {
-    const stops = output && typeof output === 'object' ? (output as { stops?: unknown }).stops : undefined;
-    return Array.isArray(stops) && stops.length > 0 ? (output as CodeTourOutput) : null;
-  });
-}
-
-export async function parseTourFileOutput(outputPath: string): Promise<CodeTourOutput | null> {
   try {
-    const text = await readFile(outputPath, "utf-8");
-    try { await unlink(outputPath); } catch { /* ignore */ }
-    if (!text.trim()) return null;
-    const parsed = JSON.parse(text);
-    // A tour with no stops isn't a tour — treat as invalid so the UI
-    // error state fires instead of rendering an empty walkthrough.
-    if (!parsed || !Array.isArray(parsed.stops) || parsed.stops.length === 0) return null;
-    return parsed as CodeTourOutput;
+    const parsed: unknown = JSON.parse(block.trim());
+    return isTourOutput(parsed) ? parsed : null;
   } catch {
-    try { await unlink(outputPath); } catch { /* ignore */ }
     return null;
   }
 }
@@ -495,17 +469,13 @@ export interface TourSessionBuildCommandOptions {
 
 export interface TourSessionBuildCommandResult {
   command: string[];
-  outputPath?: string;
   captureStdout?: boolean;
-  stdinPrompt?: string;
   cwd?: string;
   label?: string;
   prompt?: string;
-  engine: "claude" | "codex";
+  engine: MarkerEngineId;
   model: string;
-  effort?: string;
-  reasoningEffort?: string;
-  fastMode?: boolean;
+  thinking?: string;
 }
 
 export interface TourSessionJobSummary {
@@ -517,11 +487,13 @@ export interface TourSessionJobSummary {
 export interface TourSessionJobRef {
   id: string;
   engine?: string;
+  /** Full launch prompt; carries the nonce needed for marker parsing. */
+  prompt?: string;
 }
 
 export interface TourSessionOnJobCompleteOptions {
   job: TourSessionJobRef;
-  meta: { outputPath?: string; stdout?: string };
+  meta: { stdout?: string };
 }
 
 export interface TourSession {
@@ -542,33 +514,40 @@ export function createTourSession(): TourSession {
     tourChecklists,
 
     async buildCommand({ cwd, patch, diffType, options, prMetadata, config }) {
-      const engine = (typeof config?.engine === "string" ? config.engine : "claude") as "claude" | "codex";
+      const engine = (typeof config?.engine === "string" ? config.engine : "pi") as MarkerEngineId;
       const explicitModel = typeof config?.model === "string" && config.model ? config.model : null;
-      // "sonnet" is a Claude model, so we must NOT pass it to Codex when no model
-      // is explicitly selected. Leave Codex model blank and let its CLI default pick.
-      const model = explicitModel ?? (engine === "codex" ? "" : "sonnet");
-      const reasoningEffort = typeof config?.reasoningEffort === "string" && config.reasoningEffort ? config.reasoningEffort : undefined;
-      const effort = typeof config?.effort === "string" && config.effort ? config.effort : undefined;
-      const fastMode = config?.fastMode === true;
+      const model = explicitModel ?? "";
+      const thinking = typeof config?.thinking === "string" && config.thinking ? config.thinking : undefined;
+
+      // Pi has no schema flag, so the JSON schema rides in the prompt inside
+      // a nonce-tagged marker block (same shape as the guide's marker path).
+      const nonce = makeMarkerNonce();
+      const markerEngine = MARKER_ENGINES[engine];
       const userMessage = buildTourUserMessage(patch, diffType, options, prMetadata);
-      const prompt = TOUR_REVIEW_PROMPT + "\n\n---\n\n" + userMessage;
-
-      if (engine === "codex") {
-        const outputPath = generateTourOutputPath();
-        const command = await buildTourCodexCommand({ cwd, outputPath, prompt, model: model || undefined, reasoningEffort, fastMode });
-        return { command, outputPath, prompt, label: "Code Tour", engine: "codex", model, reasoningEffort, fastMode: fastMode || undefined };
-      }
-
-      const { command, stdinPrompt } = buildTourClaudeCommand(prompt, model, effort, { sandbox: resolveClaudeSandbox(loadConfig()) });
-      return { command, stdinPrompt, prompt, cwd, label: "Code Tour", captureStdout: true, engine: "claude", model, effort };
+      const prompt = TOUR_REVIEW_PROMPT + "\n\n" + buildTourMarkerOutputContract(nonce) + "\n\n---\n\n" + userMessage;
+      const { command } = buildMarkerCommand(markerEngine, prompt, model || undefined, cwd, { thinking });
+      return { command, prompt, cwd, label: "Code Tour", captureStdout: true, engine: markerEngine.id, model, thinking };
     },
 
     async onJobComplete({ job, meta }) {
       let output: CodeTourOutput | null = null;
-      if (job.engine === "codex" && meta.outputPath) {
-        output = await parseTourFileOutput(meta.outputPath);
-      } else if (meta.stdout) {
-        output = parseTourStreamOutput(meta.stdout);
+      const markerEngine = MARKER_ENGINES[job.engine as MarkerEngineId];
+      if (markerEngine) {
+        // Recover the per-job nonce embedded in the prompt; without it no
+        // block can be trusted, so parsing fails closed below (same
+        // discipline as the guide/review marker ingestion paths).
+        const nonce = extractMarkerNonce(job.prompt ?? "");
+        output = nonce && meta.stdout ? parseTourMarkerOutput(meta.stdout, markerEngine, nonce) : null;
+        if (meta.stdout && !output) {
+          // Only classify a structured provider failure after strict marker
+          // parsing has failed (a valid tour always wins over a transient
+          // earlier error in the stream).
+          const { providerError } = reduceMarkerStream(meta.stdout, markerEngine);
+          if (providerError) {
+            console.error(`[tour] ${markerEngine.author} provider error for job ${job.id}: ${providerError}`);
+            return { summary: null };
+          }
+        }
       }
 
       if (!output) {

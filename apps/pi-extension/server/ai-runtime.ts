@@ -66,38 +66,6 @@ export async function createPiAIRuntime(options: CreatePiAIRuntimeOptions = {}):
 
 		const registerSdkProviders = async (registry: InstanceType<typeof ai.ProviderRegistry>): Promise<void> => {
 			try {
-				await import("../generated/ai/providers/claude-agent-sdk.ts");
-				const claudePath = whichCmd("claude");
-				const provider = await ai.createProvider({
-					type: "claude-agent-sdk",
-					cwd,
-					...(claudePath && { claudeExecutablePath: claudePath }),
-				});
-				const providerId = registry.register(provider);
-				// A Claude session spawns its own `claude`, so it never waits on discovery
-				// (~2s, up to 10s): the first Ask AI answer starts at once.
-				deferModelDiscovery(providerId, provider, { blockSession: false });
-			} catch {
-				// Claude SDK not available.
-			}
-
-			try {
-				await import("../generated/ai/providers/codex-app-server.ts");
-				const codexPath = whichCmd("codex");
-				if (codexPath) {
-					const provider = await ai.createProvider({
-						type: "codex-sdk",
-						cwd,
-						...(codexPath ? { codexExecutablePath: codexPath } : {}),
-					});
-					const providerId = registry.register(provider);
-					deferModelDiscovery(providerId, provider);
-				}
-			} catch {
-				// Codex not available.
-			}
-
-			try {
 				await import("../generated/ai/providers/pi-sdk-node.ts");
 				const piPath = whichCmd("pi");
 				if (piPath) {
@@ -107,35 +75,13 @@ export async function createPiAIRuntime(options: CreatePiAIRuntimeOptions = {}):
 						piExecutablePath: piPath,
 					} as any);
 					const providerId = registry.register(provider);
-					// Deferred like Codex: fetchModels spawns `pi` (up to 10s), and
-					// done eagerly it held every plain /api/ai/capabilities answer
-					// until it finished. A Pi session spawns its own `pi` and runs on
-					// Pi's default model when none is picked, so it never waits either.
+					// A Pi session spawns its own `pi` and runs on Pi's default model
+					// when none is picked, so it never waits on discovery (fetchModels
+					// spawns `pi`, up to 10s) either.
 					deferModelDiscovery(providerId, provider, { blockSession: false });
 				}
 			} catch {
 				// Pi not available.
-			}
-
-			try {
-				await import("../generated/ai/providers/opencode-sdk.ts");
-				const opencodePath = whichCmd("opencode");
-				if (opencodePath) {
-					const provider = await ai.createProvider({
-						type: "opencode-sdk",
-						cwd,
-					});
-					const providerId = registry.register(provider);
-					// Deferred like Codex: fetchModels spawns `opencode serve`, so it
-					// must NOT run eagerly at startup — that spawned a server on every
-					// session for every user with opencode installed, and interrupted
-					// sessions orphaned it. The initializer runs on first explicit
-					// activation (?activate= from the model picker) or first opencode
-					// session.
-					deferModelDiscovery(providerId, provider);
-				}
-			} catch {
-				// OpenCode not available.
 			}
 		};
 

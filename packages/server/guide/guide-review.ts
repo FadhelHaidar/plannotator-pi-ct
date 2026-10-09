@@ -1,15 +1,8 @@
-import { dirname, join } from "node:path";
-import { tmpdir } from "node:os";
-import { mkdir, writeFile, readFile, unlink } from "node:fs/promises";
-import { getPlannotatorDataDir } from "@plannotator/shared/data-dir";
-import { loadConfig, resolveClaudeSandbox, resolveCursorSandbox } from "../config";
-import { claudeJobIsolationArgs, claudeJobToolArgs, findClaudeStructuredOutput, type ClaudeJobCommandOptions } from "../claude-review";
 import {
   GUIDE_NO_SECTIONS_ERROR,
   GUIDE_REVIEW_PROMPT,
   GUIDE_SCHEMA_JSON,
   buildGuideUserMessage,
-  sanitizeGuideSections,
   validateGuideOutput,
   type GuideChangedFile,
 } from "@plannotator/shared/guide-prompt";
@@ -84,90 +77,8 @@ export function composeGuideMethodology(extraInstructions?: string): string {
   ].join("\n");
 }
 
-export interface GuideClaudeCommandResult {
-  command: string[];
-  stdinPrompt: string;
-}
-
-export function buildGuideClaudeCommand(
-  prompt: string,
-  model: string = "sonnet",
-  effort?: string,
-  opts?: ClaudeJobCommandOptions,
-): GuideClaudeCommandResult {
-  return {
-    command: [
-      "claude", "-p",
-      "--permission-mode", "dontAsk",
-      "--output-format", "stream-json",
-      "--verbose",
-      "--json-schema", GUIDE_SCHEMA_JSON,
-      "--no-session-persistence",
-      "--model", model,
-      ...(effort ? ["--effort", effort] : []),
-      ...claudeJobToolArgs(),
-      ...claudeJobIsolationArgs(opts),
-    ],
-    stdinPrompt: prompt,
-  };
-}
-
-/** Materialized schema path under the current data directory. */
-function guideSchemaPath(): string {
-  return join(getPlannotatorDataDir(), "guide-schema.json");
-}
-
-/** Schema paths this process has already refreshed with its own schema. */
-const materializedGuideSchemaPaths = new Set<string>();
-
-async function ensureGuideSchemaFile(): Promise<string> {
-  const schemaPath = guideSchemaPath();
-  // Guarded per resolved path, not per process and not by file existence: a
-  // PLANNOTATOR_DATA_DIR change after import materializes the schema in the
-  // new location, and a stale file left by an older binary is overwritten
-  // once per process so the agent always gets the current schema.
-  if (!materializedGuideSchemaPaths.has(schemaPath)) {
-    await mkdir(dirname(schemaPath), { recursive: true });
-    await writeFile(schemaPath, GUIDE_SCHEMA_JSON);
-    materializedGuideSchemaPaths.add(schemaPath);
-  }
-  return schemaPath;
-}
-
-export function generateGuideOutputPath(): string {
-  return join(tmpdir(), `plannotator-guide-${crypto.randomUUID()}.json`);
-}
-
-export async function buildGuideCodexCommand(options: {
-  cwd: string;
-  outputPath: string;
-  prompt: string;
-  model?: string;
-  reasoningEffort?: string;
-  fastMode?: boolean;
-}): Promise<string[]> {
-  const { cwd, outputPath, prompt, model, reasoningEffort, fastMode } = options;
-  const schemaPath = await ensureGuideSchemaFile();
-
-  const command = [
-    "codex",
-    // Global flags must precede the "exec" subcommand for the Codex CLI.
-    ...(model ? ["-m", model] : []),
-    ...(reasoningEffort ? ["-c", `model_reasoning_effort=${reasoningEffort}`] : []),
-    ...(fastMode ? ["-c", "service_tier=fast"] : []),
-    "exec",
-    "--output-schema", schemaPath,
-    "-o", outputPath,
-    "--approve-for-me", "--ephemeral",
-    "-C", cwd,
-    prompt,
-  ];
-
-  return command;
-}
-
 // ---------------------------------------------------------------------------
-// Marker-engine (Cursor, OpenCode, Pi) support — same contract style as
+// Marker-engine (Pi) support — same contract style as
 // marker-review.ts's composeMarkerReviewPrompt/buildMarkerOutputContract, but
 // describing the GUIDE schema instead of the findings/summary review schema.
 // None of the three has a schema flag, so the marker-delimited JSON block is
@@ -195,7 +106,7 @@ or your guide will be discarded:
 ${markerOpen(nonce)}
 {
   "title": "Add guided review for marker engines",
-  "intent": "Lets Cursor/OpenCode organize a changeset into the same chaptered review Claude/Codex produce.",
+  "intent": "Organizes a changeset into the same chaptered review output.",
   "sections": [
     {
       "title": "Guide marker contract",
@@ -235,7 +146,7 @@ chapter over dumping it in unplacedFiles.`;
 
 /**
  * Compose a marker engine's guide prompt: the guide methodology (GUIDE_REVIEW_PROMPT,
- * unchanged from the claude/codex paths, plus any reviewer extra instructions
+ * plus any reviewer extra instructions
  * via composeGuideMethodology) + the marker output contract (nonce-tagged)
  * + the user message. Mirrors composeMarkerReviewPrompt's shape; guide has no
  * custom-profile concept, so there is no "replace the methodology" branch.
@@ -251,15 +162,9 @@ export function composeGuideMarkerPrompt(userMessage: string, nonce: string, ext
 // (structure/syntax), never a content rewrite.
 // ---------------------------------------------------------------------------
 
-/** System framing shared verbatim across all three repair engine paths. */
+/** System framing shared across repair prompt paths. */
 function buildGuideRepairFraming(): string {
   return "The JSON below was produced for the schema that follows but is malformed or structurally invalid. Output ONLY the corrected JSON. Fix structure and syntax; NEVER change the content: titles, overviews, file paths, summaries stay exactly as written unless syntactically impossible. If a required field is missing from the payload (e.g. a diff entry's summary), fill it with an empty string; never invent content.";
-}
-
-/** Repair prompt for the schema-enforced engines (Claude --json-schema,
- *  Codex --output-schema): framing + the schema + the malformed payload. */
-export function buildGuideRepairPrompt(payload: string): string {
-  return [buildGuideRepairFraming(), "", GUIDE_SCHEMA_JSON, "", payload].join("\n");
 }
 
 /** Repair prompt for marker engines: same framing + schema, wrapped in the
@@ -421,7 +326,7 @@ export function parseGuideMarkerOutput(stdout: string, engine: MarkerEngine, non
     const output = parsed as Record<string, unknown>;
     // A guide with no sections isn't a guide — treat as invalid so the UI error
     // state fires instead of rendering an empty screen (same rule as the
-    // claude/codex output paths).
+    // structured-output paths).
     if (Array.isArray(output.sections) && output.sections.length > 0) {
       return output as unknown as CodeGuideOutput;
     }
@@ -430,66 +335,6 @@ export function parseGuideMarkerOutput(stdout: string, engine: MarkerEngine, non
   // Straight parse failed, or produced an invalid shape — try mechanical
   // repair on the raw block before giving up (see repairGuideJsonText).
   return repairGuideJsonText(block);
-}
-
-export function parseGuideStreamOutput(stdout: string): CodeGuideOutput | null {
-  return findClaudeStructuredOutput(
-    stdout,
-    (output) => {
-      // A guide with no sections isn't a guide — treat as invalid so the UI
-      // error state fires instead of rendering an empty screen.
-      const sections = output && typeof output === 'object' ? (output as { sections?: unknown }).sections : undefined;
-      return Array.isArray(sections) && sections.length > 0 ? (output as CodeGuideOutput) : null;
-    },
-    (line) => {
-      // Not valid JSON as a whole line — this can happen when the final
-      // NDJSON line (the schema-constrained result event) is truncated
-      // mid-stream. If it still carries the structured_output key, try
-      // mechanically repairing just that embedded value before moving on.
-      const marker = '"structured_output":';
-      const idx = line.indexOf(marker);
-      return idx === -1 ? null : repairGuideJsonText(line.slice(idx + marker.length));
-    },
-  );
-}
-
-/** Reads and deletes a Codex `--output-file` JSON payload. Deletion happens
- *  even on read failure (mirrors the original inline try/finally) so a
- *  crashed job never leaves a stray temp file behind. */
-async function readGuideOutputFile(outputPath: string): Promise<string | null> {
-  try {
-    return await readFile(outputPath, "utf-8");
-  } catch {
-    return null;
-  } finally {
-    try { await unlink(outputPath); } catch { /* ignore */ }
-  }
-}
-
-/** Parses guide output text already read from disk/stdout, falling back to
- *  mechanical repair (repairGuideJsonText) on a parse failure or invalid
- *  shape before giving up. Shared by parseGuideFileOutput and
- *  onJobComplete's codex branch (which needs the raw text separately, for
- *  failed-payload capture). */
-function parseGuideOutputText(text: string): CodeGuideOutput | null {
-  if (!text.trim()) return null;
-  try {
-    const parsed = JSON.parse(text);
-    // A guide with no sections isn't a guide — treat as invalid so the UI
-    // error state fires instead of rendering an empty screen.
-    if (parsed && Array.isArray(parsed.sections) && parsed.sections.length > 0) {
-      return parsed as CodeGuideOutput;
-    }
-  } catch {
-    // fall through to mechanical repair
-  }
-  return repairGuideJsonText(text);
-}
-
-export async function parseGuideFileOutput(outputPath: string): Promise<CodeGuideOutput | null> {
-  const text = await readGuideOutputFile(outputPath);
-  if (text === null) return null;
-  return parseGuideOutputText(text);
 }
 
 export interface GuideSessionBuildCommandOptions {
@@ -517,12 +362,9 @@ export interface GuideSessionBuildCommandResult {
   cwd?: string;
   label?: string;
   prompt?: string;
-  engine: "claude" | "codex" | MarkerEngineId;
+  engine: MarkerEngineId;
   model: string;
-  effort?: string;
-  reasoningEffort?: string;
-  fastMode?: boolean;
-  /** Pi's unified reasoning level (marker engines only). */
+  /** Pi's unified reasoning level. */
   thinking?: string;
 }
 
@@ -535,9 +377,8 @@ export interface GuideSessionJobSummary {
 export interface GuideSessionJobRef {
   id: string;
   engine?: string;
-  /** Full prompt text stored on the job at launch. Only read for Cursor/OpenCode/
-   *  Pi jobs, to recover the per-job marker nonce (extractMarkerNonce) — the
-   *  claude/codex paths never touch it. */
+  /** Full prompt text stored on the job at launch. Read to recover the
+   *  per-job marker nonce (extractMarkerNonce). */
   prompt?: string;
 }
 
@@ -644,46 +485,6 @@ function extractMarkerFailedPayload(engine: MarkerEngine, stdout: string, nonce:
   return stdout;
 }
 
-/** Finds the newest NDJSON `result` event in Claude stream-json stdout that
- *  carries a `structured_output` key, regardless of whether that value is
- *  valid — used only for failed-payload capture, never for the trusted parse
- *  path. A run with background subagents emits several result events and the
- *  trailing ones often carry no output, so "the last result event" would
- *  usually hand the repair UI nothing. */
-function findLastClaudeResultWithOutput(stdout: string): Record<string, unknown> | null {
-  if (!stdout.trim()) return null;
-  const lines = stdout.trim().split('\n');
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    try {
-      const event = JSON.parse(line);
-      if (event && typeof event === "object" && (event as Record<string, unknown>).type === "result"
-        && (event as Record<string, unknown>).structured_output !== undefined) {
-        return event as Record<string, unknown>;
-      }
-    } catch {
-      // keep scanning backward past malformed lines
-    }
-  }
-  return null;
-}
-
-/** Best-effort raw-candidate extraction for a failed Claude-engine job: the
- *  structured_output value of the newest result event that carried one (even
- *  if it failed shape validation), else the raw stdout tail. */
-function extractClaudeFailedPayload(stdout: string): string {
-  const event = findLastClaudeResultWithOutput(stdout);
-  if (event) {
-    try {
-      return JSON.stringify(event.structured_output);
-    } catch {
-      // fall through to stdout tail
-    }
-  }
-  return stdout;
-}
-
 export function createGuideSession(): GuideSession {
   const guideResults = new Map<string, CodeGuideOutput>();
   const guideReviewed = new Map<string, boolean[]>();
@@ -699,15 +500,10 @@ export function createGuideSession(): GuideSession {
     launchReviews,
 
     async buildCommand({ cwd, patch, diffType, options, prMetadata, changedFiles, config, repair }) {
-      const engine = (typeof config?.engine === "string" ? config.engine : "claude") as "claude" | "codex" | MarkerEngineId;
+      const engine = (typeof config?.engine === "string" ? config.engine : "pi") as MarkerEngineId;
       const explicitModel = typeof config?.model === "string" && config.model ? config.model : null;
-      // "sonnet" is a Claude model, so we must NOT pass it to Codex or the
-      // marker engines (Cursor, OpenCode, Pi) when no model is explicitly
-      // selected. Leave their model blank and let each CLI's own default pick.
-      const model = explicitModel ?? (engine === "claude" ? "sonnet" : "");
-      const reasoningEffort = typeof config?.reasoningEffort === "string" && config.reasoningEffort ? config.reasoningEffort : undefined;
-      const effort = typeof config?.effort === "string" && config.effort ? config.effort : undefined;
-      const fastMode = config?.fastMode === true;
+      const model = explicitModel ?? "";
+      const thinking = typeof config?.thinking === "string" && config.thinking ? config.thinking : undefined;
 
       if (repair) {
         // A repair launch replaces the normal guide-organizing prompt
@@ -717,24 +513,12 @@ export function createGuideSession(): GuideSession {
         // re-analysis, and should be fast and cheap.
         const markerEngine = MARKER_ENGINES[engine as MarkerEngineId];
         if (markerEngine) {
-          const thinking = "minimal";
+          const repairThinking = "minimal";
           const nonce = makeMarkerNonce();
           const markerPrompt = composeGuideMarkerRepairPrompt(repair.payload, nonce);
-          const { command } = buildMarkerCommand(markerEngine, markerPrompt, model || undefined, cwd, { thinking, cursorSandbox: resolveCursorSandbox(loadConfig()) });
-          return { command, prompt: markerPrompt, cwd, label: "Guide Repair", captureStdout: true, engine: markerEngine.id, model, thinking };
+          const { command } = buildMarkerCommand(markerEngine, markerPrompt, model || undefined, cwd, { thinking: repairThinking });
+          return { command, prompt: markerPrompt, cwd, label: "Guide Repair", captureStdout: true, engine: markerEngine.id, model, thinking: repairThinking };
         }
-
-        const repairPrompt = buildGuideRepairPrompt(repair.payload);
-
-        if (engine === "codex") {
-          const outputPath = generateGuideOutputPath();
-          // "low" not "minimal": no current Codex model supports minimal.
-          const command = await buildGuideCodexCommand({ cwd, outputPath, prompt: repairPrompt, model: model || undefined, reasoningEffort: "low", fastMode: false });
-          return { command, outputPath, prompt: repairPrompt, label: "Guide Repair", engine: "codex", model, reasoningEffort: "low" };
-        }
-
-        const { command, stdinPrompt } = buildGuideClaudeCommand(repairPrompt, model, "low", { sandbox: resolveClaudeSandbox(loadConfig()) });
-        return { command, stdinPrompt, prompt: repairPrompt, cwd, label: "Guide Repair", captureStdout: true, engine: "claude", model, effort: "low" };
       }
 
       // Reviewer-supplied extra instructions (#1265) apply only to the normal
@@ -751,31 +535,16 @@ export function createGuideSession(): GuideSession {
         : prMetadata;
       const userMessage = buildGuideUserMessage(patch, diffType, options, promptPRMetadata, changedFiles);
 
-      // Marker engines (Cursor, OpenCode, Pi) — none has a schema flag, so the
+      // Marker engine (Pi) — no schema flag, so the
       // guide contract's marker-delimited JSON block (composeGuideMarkerPrompt)
       // is the only way to get structured output back. Mirrors review.ts's
       // marker branch: per-job nonce embedded in the prompt, recovered from
       // job.prompt at parse time in onJobComplete below. captureStdout is
       // required — the marker block comes back on stdout NDJSON.
-      const markerEngine = MARKER_ENGINES[engine as MarkerEngineId];
-      if (markerEngine) {
-        const thinking = typeof config?.thinking === "string" && config.thinking ? config.thinking : undefined;
-        const nonce = makeMarkerNonce();
-        const markerPrompt = composeGuideMarkerPrompt(userMessage, nonce, extraInstructions);
-        const { command } = buildMarkerCommand(markerEngine, markerPrompt, model || undefined, cwd, { thinking, cursorSandbox: resolveCursorSandbox(loadConfig()) });
-        return { command, prompt: markerPrompt, cwd, label: "Guided Review", captureStdout: true, engine: markerEngine.id, model, thinking };
-      }
-
-      const prompt = composeGuideMethodology(extraInstructions) + "\n\n---\n\n" + userMessage;
-
-      if (engine === "codex") {
-        const outputPath = generateGuideOutputPath();
-        const command = await buildGuideCodexCommand({ cwd, outputPath, prompt, model: model || undefined, reasoningEffort, fastMode });
-        return { command, outputPath, prompt, label: "Guided Review", engine: "codex", model, reasoningEffort, fastMode: fastMode || undefined };
-      }
-
-      const { command, stdinPrompt } = buildGuideClaudeCommand(prompt, model, effort, { sandbox: resolveClaudeSandbox(loadConfig()) });
-      return { command, stdinPrompt, prompt, cwd, label: "Guided Review", captureStdout: true, engine: "claude", model, effort };
+      const nonce = makeMarkerNonce();
+      const markerPrompt = composeGuideMarkerPrompt(userMessage, nonce, extraInstructions);
+      const { command } = buildMarkerCommand(MARKER_ENGINES[engine], markerPrompt, model || undefined, cwd, { thinking });
+      return { command, prompt: markerPrompt, cwd, label: "Guided Review", captureStdout: true, engine, model, thinking };
     },
 
     async onJobComplete({ job, meta, changedFiles, launchReview }) {
@@ -822,13 +591,6 @@ export function createGuideSession(): GuideSession {
           }
           rawCandidate = extractMarkerFailedPayload(markerEngine, meta.stdout, nonce);
         }
-      } else if (job.engine === "codex" && meta.outputPath) {
-        const rawText = await readGuideOutputFile(meta.outputPath);
-        output = rawText !== null ? parseGuideOutputText(rawText) : null;
-        rawCandidate = rawText ?? undefined;
-      } else if (meta.stdout) {
-        output = parseGuideStreamOutput(meta.stdout);
-        rawCandidate = extractClaudeFailedPayload(meta.stdout);
       }
 
       if (!output) {

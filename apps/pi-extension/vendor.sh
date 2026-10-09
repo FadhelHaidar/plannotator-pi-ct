@@ -49,7 +49,7 @@ rm -rf generated/call-flow-runtime/packs
 cp -R ../../packages/shared/call-flow-runtime/packs generated/call-flow-runtime/packs
 
 # Vendor review agent modules from packages/server/ — rewrite imports for generated/ layout
-for f in agent-review-message codex-review claude-review review-findings marker-review path-utils review-skill-loader; do
+for f in agent-review-message review-findings marker-review path-utils review-skill-loader; do
   src="../../packages/server/$f.ts"
   printf '// @generated — DO NOT EDIT. Source: packages/server/%s.ts\n' "$f" | cat - "$src" \
     | sed 's|from "./vcs"|from "./review-core.ts"|' \
@@ -72,9 +72,9 @@ for f in tour-review; do
     | sed 's|from "\.\./vcs"|from "./review-core.ts"|' \
     | sed 's|from "\.\./pr"|from "./pr-provider.ts"|' \
     | sed 's|from "\.\./agent-review-message"|from "./agent-review-message.ts"|' \
-    | sed 's|from "\.\./claude-review"|from "./claude-review.ts"|' \
     | sed 's|from "\.\./config"|from "./config.ts"|' \
-    | sed 's|from "@plannotator/shared/tour"|from "./tour.ts"|' \
+    | sed 's|from "\.\./marker-review"|from "./marker-review.ts"|' \
+  | sed 's|from "@plannotator/shared/tour"|from "./tour.ts"|' \
     | sed 's|from "@plannotator/shared/data-dir"|from "./data-dir.ts"|' \
     > "generated/$f.ts"
 done
@@ -90,7 +90,6 @@ for f in guide-review; do
     | sed 's|from "\.\./pr"|from "./pr-provider.ts"|' \
     | sed 's|from "\.\./agent-review-message"|from "./agent-review-message.ts"|' \
     | sed 's|from "\.\./marker-review"|from "./marker-review.ts"|' \
-    | sed 's|from "\.\./claude-review"|from "./claude-review.ts"|' \
     | sed 's|from "\.\./config"|from "./config.ts"|' \
     | sed 's|from "@plannotator/shared/guide"|from "./guide.ts"|' \
     | sed 's|from "@plannotator/shared/guide-format"|from "./guide-format.ts"|' \
@@ -132,7 +131,7 @@ for f in index types provider session-manager endpoints context base-session ses
     > "generated/ai/$f.ts"
 done
 
-for f in claude-agent-sdk codex-app-server opencode-sdk command-path child-io pi-sdk pi-sdk-node pi-events pi-version; do
+for f in command-path child-io pi-sdk pi-sdk-node pi-events pi-version; do
   src="../../packages/ai/providers/$f.ts"
   printf '// @generated — DO NOT EDIT. Source: packages/ai/providers/%s.ts\n' "$f" | cat - "$src" \
     | sed "s|from ['\"]@plannotator/core/model-catalog['\"]|from '../model-catalog.ts'|g" \

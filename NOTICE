@@ -11,7 +11,7 @@ See LICENSE-MIT and LICENSE-APACHE. This distribution does not relicense those
 components. Compact tracker/keybinding customizations originate in the source
 fork. FadhelHaidar maintains this standalone extraction's packaging/release seam.
 
-Standalone changes are documented in EXTRACTION.md and the root README.md:
+Standalone Pi-only scope and release adaptations are documented in the root README.md; the checked-in file inventory is in EXTRACTION-FILES.txt:
 reduced manifests/workspace/CI, CT version metadata, frozen source bootstrap,
 package closure smoke checks and installation/provenance documentation.
 Browser UI and Pi runtime implementations have not been redesigned.

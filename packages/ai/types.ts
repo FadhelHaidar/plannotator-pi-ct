@@ -2,7 +2,7 @@
  * Core types for the Plannotator AI provider layer.
  *
  * This module defines the abstract interfaces that any agent runtime
- * (Claude Agent SDK, OpenCode, future providers) must implement to
+ * (the Pi SDK and future providers) must implement to
  * power AI features inside Plannotator's plan review and code review UIs.
  */
 
@@ -211,10 +211,10 @@ export interface CreateSessionOptions {
  * 3. Streaming responses back as AIMessage events
  *
  * Providers are registered by name and selected at runtime based on the
- * host environment (Claude Code → "claude-agent-sdk", OpenCode → "opencode-sdk").
+ * host environment (Pi → "pi-sdk").
  */
 export interface AIProvider {
-  /** Unique name for this provider (e.g. "claude-agent-sdk"). */
+  /** Unique name for this provider (e.g. "pi-sdk"). */
   readonly name: string;
 
   /** What this provider can do. */
@@ -303,47 +303,6 @@ export interface AIProviderConfig {
   model?: string;
 }
 
-export interface ClaudeAgentSDKConfig extends AIProviderConfig {
-  type: "claude-agent-sdk";
-  /**
-   * Tools the AI session is allowed to use.
-   * Defaults to read-only tools for safety in inline chat.
-   */
-  allowedTools?: string[];
-  /**
-   * Permission mode for the session.
-   * Defaults to "default" (inherits user's existing permission rules).
-   */
-  permissionMode?: "default" | "plan" | "bypassPermissions";
-  /**
-   * Explicit path to the claude CLI binary.
-   * Required when running inside a compiled binary where PATH resolution
-   * doesn't work the same way (e.g., bun build --compile).
-   */
-  claudeExecutablePath?: string;
-  /**
-   * Setting sources to load permission rules from.
-   * Loads user's existing Claude Code permission rules so inline chat
-   * inherits what they've already approved.
-   */
-  settingSources?: string[];
-}
-
-export interface CodexSDKConfig extends AIProviderConfig {
-  type: "codex-sdk";
-  /**
-   * Sandbox mode controls what the Codex agent can do.
-   * Defaults to "read-only" for safety in inline chat.
-   */
-  sandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
-  /**
-   * Explicit path to the codex CLI binary.
-   * Required when running inside a compiled binary where PATH resolution
-   * doesn't work the same way (e.g., bun build --compile).
-   */
-  codexExecutablePath?: string;
-}
-
 export interface PiSDKConfig extends AIProviderConfig {
   type: "pi-sdk";
   /**
@@ -352,12 +311,4 @@ export interface PiSDKConfig extends AIProviderConfig {
    * doesn't work the same way (e.g., bun build --compile).
    */
   piExecutablePath?: string;
-}
-
-export interface OpenCodeConfig extends AIProviderConfig {
-  type: "opencode-sdk";
-  /** Hostname for the OpenCode server. Default: "127.0.0.1". */
-  hostname?: string;
-  /** Port for the spawned OpenCode server. Default: 0 (OS-assigned free port). */
-  port?: number;
 }

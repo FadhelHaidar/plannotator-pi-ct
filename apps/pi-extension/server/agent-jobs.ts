@@ -27,7 +27,6 @@ import {
 import { resolveGuideLaunchInstructions } from "../generated/guide-instructions-store.ts";
 import { gitColorFreeEnvironment } from "../generated/review-core.ts";
 import type { GuideLaunchReview } from "../generated/guide-format.ts";
-import { allowedToolsOf, CLAUDE_SHELL_BLOCKED_WARNING, detectClaudeShellBlocked, disallowedToolsOf, formatClaudeLogEvent } from "../generated/claude-review.ts";
 import {
 	MARKER_ENGINES,
 	formatMarkerLogEvent,
@@ -49,14 +48,9 @@ const CAPABILITIES = `${BASE}/capabilities`;
 // Providers whose command is owned by the server. Client-supplied argv is never
 // spawned for these — buildCommand must produce the command or the launch fails.
 const SERVER_BUILT_PROVIDERS: ReadonlySet<string> = new Set([
-	"claude",
-	"codex",
 	"tour",
 	"guide",
-	"cursor",
-	"opencode",
 	"pi",
-	"copilot",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -98,7 +92,7 @@ export interface AgentJobHandlerOptions {
 		cwd?: string;
 		prompt?: string;
 		label?: string;
-		/** Underlying engine used (e.g., "claude" or "codex"). Stored on AgentJobInfo for UI display. */
+		/** Underlying engine used. Stored on AgentJobInfo for UI display. */
 		engine?: string;
 		/** Model used (e.g., "sonnet", "opus"). Stored on AgentJobInfo for UI display. */
 		model?: string;
@@ -172,26 +166,20 @@ export function createAgentJobHandler(options: AgentJobHandlerOptions) {
 	let version = 0;
 
 	// --- Capability detection (run once) ---
+	const piAvailable = mode === "review" && whichCmd("pi");
 	const capabilities: AgentCapability[] = [
-		{ id: "claude", name: "Claude Code", available: whichCmd("claude") },
-		{ id: "codex", name: "Codex CLI", available: whichCmd("codex") },
-		{ id: "tour", name: "Code Tour", available: whichCmd("claude") || whichCmd("codex") },
+		{
+			id: "tour",
+			name: "Code Tour",
+			available: piAvailable,
+		},
 		{
 			id: "guide",
 			name: "Guided Review",
-			// Guided Review also runs on the marker engines (Cursor, OpenCode, Pi) —
-			// same review-mode + binary-on-PATH gating as their own capability
-			// entries below (NOTE: cursor's binary is `agent`).
-			available:
-				whichCmd("claude") ||
-				whichCmd("codex") ||
-				(mode === "review" && Object.values(MARKER_ENGINES).some((engine) => whichCmd(engine.binary))),
+			// Guided Review runs on the Pi marker engine.
+			available: piAvailable,
 		},
 	];
-	// Marker engines (Cursor, OpenCode, Pi) — same shape, one loop. Available
-	// only in review mode when the binary is on PATH (NOTE: cursor's binary is `agent`).
-	// Model catalogs are discovered LAZILY (see buildCapabilitiesResponse) so a
-	// slow/unauthenticated `<binary> models` spawn never blocks startup.
 	for (const engine of Object.values(MARKER_ENGINES)) {
 		capabilities.push({
 			id: engine.id,
@@ -317,16 +305,9 @@ export function createAgentJobHandler(options: AgentJobHandlerOptions) {
 				// events — handled in onJobComplete).
 				const emitLogLine = (line: string) => {
 					if (!line.trim()) return;
-					// Tour jobs with the Claude engine also stream Claude JSONL.
-					if (provider === "claude" || spawnOptions?.engine === "claude") {
-						const formatted = formatClaudeLogEvent(line);
-						if (formatted !== null) broadcast({ type: "job:log", jobId: id, delta: formatted + '\n' });
-						return;
-					}
-					// Marker engines (Cursor, OpenCode, Pi): map their NDJSON stream events
-					// into readable log deltas via the engine's own formatter (Cursor
-					// applies the partial-output dedup rule; OpenCode reads text parts;
-					// Pi reads message_end/tool_execution_start).
+					// Pi (and guide/tour jobs carrying the pi engine): map NDJSON stream
+					// events into readable log deltas via the engine's own formatter
+					// (Pi reads message_end/tool_execution_start).
 					// Guide jobs keep provider: "guide" and carry the marker engine on
 					// spawnOptions.engine instead — fall back to that lookup so guide
 					// logs get the same readable formatting as review jobs.
@@ -403,12 +384,6 @@ export function createAgentJobHandler(options: AgentJobHandlerOptions) {
 					entry.info.error = stderrBuf;
 				}
 
-				// #1627: a Claude job whose every shell command was refused (sandbox that
-				// cannot start, under dontAsk) otherwise finishes looking normal.
-				if (captureStdout && (provider === "claude" || spawnOptions?.engine === "claude") && detectClaudeShellBlocked(stdoutBuf, allowedToolsOf(entry.info.command), disallowedToolsOf(entry.info.command))) {
-					entry.info.warning = CLAUDE_SHELL_BLOCKED_WARNING;
-				}
-
 				// Ingest results before broadcasting completion
 				const jobOutputPath = jobOutputPaths.get(id);
 				const jobCwd = jobOutputPaths.get(`${id}:cwd`);
@@ -424,13 +399,10 @@ export function createAgentJobHandler(options: AgentJobHandlerOptions) {
 							launchReview,
 						});
 					} catch (err) {
-						// Claude/Codex REVIEW jobs stay fail-open by design: annotations may
-						// already be partially ingested by the time something throws, and
-						// flipping the job to "failed" would hide a review the user can
-						// otherwise still see/use. Cursor, OpenCode, and Pi are fail-closed —
-						// an unexpected throw during prompt-enforced ingestion must fail the
-						// job, not pass it. (Their handlers normally fail by mutation and
-						// never throw; this guards future refactors.) Tour and guide widen
+						// All providers are fail-closed — an unexpected throw during
+						// prompt-enforced ingestion must fail the job, not pass it.
+						// (Handlers normally fail by mutation and never throw; this
+						// guards future refactors.) Tour and guide widen
 						// that fail-closed rule too: both are single-shot, all-or-nothing
 						// outputs with nothing meaningful partially ingested, so an
 						// unexpected throw means the whole result is unusable.

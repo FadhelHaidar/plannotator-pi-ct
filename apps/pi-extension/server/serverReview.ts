@@ -4,14 +4,14 @@ import { likelyAppHtmlEncoding, prewarmAppHtml } from "../generated/app-html.ts"
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import os from "node:os";
-import { basename, resolve as resolvePath } from "node:path";
+import { basename } from "node:path";
 
 import { SingleFlight } from "../generated/single-flight.ts";
 import { contentHash } from "../generated/draft.ts";
 import { countUnsentDraftComments, hostSessionClosedEvent } from "../generated/host-control.ts";
 import { handleHostControl, resolveHostControlToken, type HostControl } from "./host-control.ts";
 import { createReviewDraftSession, prDraftTargetKey, type ReviewDraftKeys } from "../generated/review-draft.ts";
-import { agentToolSaveFailed, loadConfig, saveConfig, detectGitUser, getServerConfig, parseReviewAnalysisConfig, resolveAIEnabled, resolveSharingEnabled, resolveClaudeSandbox, resolveCursorSandbox, resolveFeedbackHistory, resolveGuideHistory, resolveGuideShareUrl, resolveGitRemoteCheck, resolveReviewProgress } from "../generated/config.ts";
+import { agentToolSaveFailed, loadConfig, saveConfig, detectGitUser, getServerConfig, parseReviewAnalysisConfig, resolveAIEnabled, resolveSharingEnabled, resolveFeedbackHistory, resolveGuideHistory, resolveGuideShareUrl, resolveGitRemoteCheck, resolveReviewProgress } from "../generated/config.ts";
 import { appendFeedbackRecord, countChangedFiles, deriveFeedbackProject, type FeedbackDecision, type FeedbackReviewTarget } from "../generated/feedback-archive.ts";
 import { isFaviconStyle, type FaviconStyle } from "../generated/favicon.ts";
 
@@ -105,8 +105,8 @@ import { createCommitAvatarResolver } from "../generated/commit-avatars.ts";
 import { detectGeneratedFiles, detectGeneratedFilesByName } from "../generated/generated-files.ts";
 
 import { createEditorAnnotationHandler } from "./annotations.ts";
-import { createAgentJobHandler, whichCmd as commandExists } from "./agent-jobs.ts";
-import { type AgentJobInfo, REVIEW_OUTPUT_FAILED, getAgentJobAnnotationContext, markJobReviewFailed } from "../generated/agent-jobs.ts";
+import { createAgentJobHandler } from "./agent-jobs.ts";
+import { type AgentJobInfo, getAgentJobAnnotationContext } from "../generated/agent-jobs.ts";
 import { createExternalAnnotationHandler } from "./external-annotations.ts";
 import {
 	handleReviewDraftRequest,
@@ -141,20 +141,7 @@ import {
 	submitPRReview,
 } from "./pr.ts";
 import { getRepoInfo } from "./project.ts";
-import {
-	composeCodexReviewPrompt,
-	buildCodexCommand,
-	generateOutputPath,
-	parseCodexOutput,
-	transformReviewFindings,
-} from "../generated/codex-review.ts";
 import { buildAgentReviewUserMessage, buildAgentReviewUserMessageForTarget, type WorkspaceReviewPromptContext } from "../generated/agent-review-message.ts";
-import {
-	composeClaudeReviewPrompt,
-	buildClaudeCommand,
-	parseClaudeStreamOutput,
-	transformClaudeFindings,
-} from "../generated/claude-review.ts";
 import { createTourSession, TOUR_EMPTY_OUTPUT_ERROR } from "../generated/tour-review.ts";
 import { createGuideSession, GUIDE_EMPTY_OUTPUT_ERROR } from "../generated/guide-review.ts";
 import { GuideShareError, shareGuide, unshareBeforeDelete, unshareGuide } from "../generated/guide-share.ts";
@@ -276,14 +263,6 @@ const piCodeNavRuntime: CodeNavRuntime = {
 	},
 };
 
-// Review ingestion completion semantics (REVIEW_OUTPUT_FAILED,
-// markJobReviewFailed) now live in the shared agent-jobs module.
-
-// Node equivalent of Bun.which(cmd) — used to pick a guide repair engine
-// (prefer whichever schema-enforced CLI is on PATH). Imported as
-// `commandExists` from agent-jobs.ts's `whichCmd` (single source of truth;
-// the other pre-existing copies in ai-runtime.ts / agent-terminal are left
-// alone — out of scope here).
 
 /** Detect if running inside WSL (Windows Subsystem for Linux) */
 function detectWSL(): boolean {
@@ -1475,33 +1454,8 @@ export async function startReviewServer(options: {
 					if (!payload) {
 						throw new Error("No captured output to repair for that job — run the guide again instead.");
 					}
-					// Prefer the failed job's OWN engine, marker or not, when its
-					// binary is present on this machine: the failed job got far
-					// enough to produce capturable output, so that engine is
-					// PROVABLY runnable here — a fact no other candidate can claim.
-					// claude/codex are only a FALLBACK (in that order) when the
-					// failed engine's binary is missing, because binary presence
-					// alone means installed, not authenticated/usable — a broken
-					// claude repair would itself become the newest failed job and
-					// hijack the recovery panel next render, a doom loop. Marker
-					// engines' binary name can differ from the engine id (Cursor's
-					// CLI binary is `agent`, not `cursor`), so resolve via
-					// MARKER_ENGINES[...].binary before falling back to the engine
-					// id itself for claude/codex.
-					const failedEngine = typeof config?.engine === "string" && config.engine ? config.engine : undefined;
-					const failedEngineBinary = failedEngine
-						? MARKER_ENGINES[failedEngine as MarkerEngineId]?.binary ?? failedEngine
-						: undefined;
-					const repairEngine =
-						failedEngine && commandExists(failedEngineBinary!)
-							? failedEngine
-							: commandExists("claude")
-								? "claude"
-								: commandExists("codex")
-									? "codex"
-									: (failedEngine ?? "claude");
+					// The only engine is pi, so the repair job launches on it too.
 					repair = { payload };
-					guideConfig = { ...config, engine: repairEngine };
 				}
 
 				const built = await guide.buildCommand({
@@ -1599,32 +1553,12 @@ export async function startReviewServer(options: {
 				: buildAgentReviewUserMessage(launchPatch, launchDiffType as DiffType, userMessageOptions, launchPrMeta, isCustomReview);
 			const jobLabel = workspacePrompt ? "Workspace Review" : "Code Review";
 
-			if (provider === "codex") {
-				const model = typeof config?.model === "string" && config.model ? config.model : undefined;
-				const reasoningEffort = typeof config?.reasoningEffort === "string" && config.reasoningEffort ? config.reasoningEffort : undefined;
-				const fastMode = config?.fastMode === true;
-				const outputPath = generateOutputPath();
-				const prompt = composeCodexReviewPrompt(userMessage, reviewProfile);
-				const command = await buildCodexCommand({ cwd, outputPath, prompt, model, reasoningEffort, fastMode });
-				return { command, outputPath, prompt, cwd, label: jobLabel, model, reasoningEffort, fastMode: fastMode || undefined, prUrl: launchPrUrl, diffScope: launchDiffScope, diffContext, reviewProfileId: reviewProfile.id, reviewProfileLabel: reviewProfile.label };
-			}
-
-			if (provider === "claude") {
-				const model = typeof config?.model === "string" && config.model ? config.model : undefined;
-				const effort = typeof config?.effort === "string" && config.effort ? config.effort : undefined;
-				const prompt = composeClaudeReviewPrompt(userMessage, reviewProfile);
-				const { command, stdinPrompt } = buildClaudeCommand(prompt, model, effort, { sandbox: resolveClaudeSandbox(loadConfig()) });
-				return { command, stdinPrompt, prompt, cwd, label: jobLabel, captureStdout: true, model, effort, prUrl: launchPrUrl, diffScope: launchDiffScope, diffContext, reviewProfileId: reviewProfile.id, reviewProfileLabel: reviewProfile.label };
-			}
-
-			// Marker engines (Cursor, OpenCode, Pi) — one branch, same shape as Claude.
-			// None of the three has a schema flag, so composeMarkerReviewPrompt ALWAYS
-			// appends the marker-block output contract (even for a custom profile —
-			// it's the only thing that makes their prose output parseable). The
-			// engine's buildArgv passes the prompt as the trailing positional arg and
-			// threads the spawn cwd (--workspace for Cursor; OpenCode (#1609) and Pi have
-			// no cwd flag — they use the process's actual cwd, which spawnJob
-			// already sets from this same cwd).
+			// Marker engine (Pi) — the only backend. It has no schema flag, so
+			// composeMarkerReviewPrompt ALWAYS appends the marker-block output
+			// contract (even for a custom profile — it's the only thing that makes
+			// prose output parseable). The engine's buildArgv passes the prompt as
+			// the trailing positional arg and Pi has no cwd flag — it uses the
+			// process's actual cwd, which spawnJob already sets from this same cwd.
 			// captureStdout is required: the marker block comes back on stdout NDJSON.
 			const markerEngine = MARKER_ENGINES[provider as MarkerEngineId];
 			if (markerEngine) {
@@ -1634,7 +1568,7 @@ export async function startReviewServer(options: {
 				// at parse time so echoed/quoted bare tags can't be mistaken for the payload.
 				const nonce = makeMarkerNonce();
 				const prompt = composeMarkerReviewPrompt(reviewProfile, userMessage, nonce);
-				const { command } = buildMarkerCommand(markerEngine, prompt, model, cwd, { thinking, cursorSandbox: resolveCursorSandbox(loadConfig()) });
+				const { command } = buildMarkerCommand(markerEngine, prompt, model, cwd, { thinking });
 				return { command, prompt, cwd, label: jobLabel, captureStdout: true, model, thinking, prUrl: launchPrUrl, diffScope: launchDiffScope, diffContext, reviewProfileId: reviewProfile.id, reviewProfileLabel: reviewProfile.label };
 			}
 
@@ -1675,72 +1609,13 @@ export async function startReviewServer(options: {
 				return result;
 			};
 
-			if (job.provider === "codex") {
-				const output = meta.outputPath ? await parseCodexOutput(meta.outputPath) : null;
-				if (!output) {
-					// Process exited 0 but output is missing/unparseable — not a green run.
-					markJobReviewFailed(job, REVIEW_OUTPUT_FAILED);
-					return;
-				}
-
-				const hasBlockingFindings = output.findings.some(f => f.priority !== null && f.priority <= 1);
-				job.summary = {
-					correctness: hasBlockingFindings ? "Issues Found" : output.overall_correctness,
-					explanation: output.overall_explanation,
-					confidence: output.overall_confidence_score,
-				};
-
-				ingest(
-					transformReviewFindings(
-						output.findings,
-						job.source,
-						cwd,
-						"Codex",
-						workspace ? (filePath) => workspace.normalizeAnnotationPath(filePath) : undefined,
-					),
-					"codex-review",
-				);
-				return;
-			}
-
-			if (job.provider === "claude") {
-				const stdout = meta.stdout ?? "";
-				const output = parseClaudeStreamOutput(stdout);
-				if (!output) {
-					console.error(`[claude-review] Failed to parse output (${stdout.length} bytes, last 200: ${stdout.slice(-200)})`);
-					markJobReviewFailed(job, REVIEW_OUTPUT_FAILED);
-					return;
-				}
-
-				// Recompute the verdict from the findings we actually render. Nothing is
-				// dropped now (un-pinnable findings become file/general comments), so the
-				// count reflects reality and the card can never claim more than it shows.
-				const transformed = transformClaudeFindings(
-					output.findings,
-					job.source,
-					cwd,
-					workspace ? (filePath) => workspace.normalizeAnnotationPath(filePath) : undefined,
-				);
-				const counts = { important: 0, nit: 0, pre_existing: 0 };
-				for (const a of transformed) counts[a.severity]++;
-				const total = counts.important + counts.nit + counts.pre_existing;
-				job.summary = {
-					correctness: counts.important === 0 ? "Correct" : "Issues Found",
-					explanation: `${counts.important} important, ${counts.nit} nit, ${counts.pre_existing} pre-existing`,
-					confidence: total === 0 ? 1.0 : Math.max(0, 1.0 - (counts.important * 0.2)),
-				};
-
-				ingest(transformed, "claude-review");
-				return;
-			}
-
-			// --- Marker path (Cursor, OpenCode, Pi) ---
+			// --- Marker path (Pi) ---
 			// FAIL-CLOSED: marker output is prompt-enforced (no schema flag), so any
 			// missing/malformed/schema/transform/insertion failure must MUTATE the job
 			// to failed — NEVER throw (agent-jobs.ts swallows throws, silently leaving
 			// an exit-0 job marked done). Mirrors the Tour fail-closed pattern below.
 			// Findings carry nullable file/line, classified into line/whole-file/
-			// general by transformMarkerFindings — nothing is dropped (same as Claude).
+			// general by transformMarkerFindings — nothing is dropped.
 			const markerEngine = MARKER_ENGINES[job.provider as MarkerEngineId];
 			if (markerEngine) {
 				// Recover the per-job nonce embedded in the prompt; without it no block
@@ -1760,7 +1635,7 @@ export async function startReviewServer(options: {
 					return;
 				}
 
-				// Derive the verdict from finding severities (like Claude) rather than
+				// Derive the verdict from finding severities rather than
 				// trusting the model's free-form `correctness` string. Marker engines
 				// have no schema flag, so a model value like "not correct" would be
 				// stored verbatim and the detail panel (any string containing "correct"

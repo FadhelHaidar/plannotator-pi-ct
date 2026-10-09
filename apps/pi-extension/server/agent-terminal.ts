@@ -274,15 +274,7 @@ function commandExists(command: string): boolean {
 }
 
 function formatAgentName(id: string): string {
-	const overrides: Record<string, string> = {
-		amp: "Amp",
-		claude: "Claude",
-		codex: "Codex",
-		copilot: "GitHub Copilot",
-		gemini: "Gemini",
-		opencode: "OpenCode",
-		pi: "Pi",
-	};
+	const overrides: Record<string, string> = { pi: "Pi" };
 	if (overrides[id]) return overrides[id];
 	return id
 		.split("-")

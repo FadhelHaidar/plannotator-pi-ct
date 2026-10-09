@@ -22,22 +22,21 @@
  *                         │  AIProvider     │ (abstract)
  *                         └────────┬───────┘
  *                                  │
- *                    ┌─────────────┼──────────────┐
- *                    ▼             ▼               ▼
- *           ┌──────────────┐ ┌──────────┐  ┌───────────┐
- *           │ Claude Agent │ │ OpenCode │  │  Future   │
- *           │ SDK Provider │ │ Provider │  │ Providers │
- *           └──────────────┘ └──────────┘  └───────────┘
+ *                    ┌─────────────┴──────────────┐
+ *                    ▼                            ▼
+ *           ┌──────────────┐              ┌───────────┐
+ *           │ Pi SDK       │              │  Future   │
+ *           │ Provider     │              │ Providers │
+ *           └──────────────┘              └───────────┘
  *
  * Quick start:
  *
  * ```ts
- * import "@plannotator/ai/providers/claude-agent-sdk";
  * import { ProviderRegistry, createProvider, createAIEndpoints, SessionManager } from "@plannotator/ai";
  *
  * // 1. Create a registry and provider
  * const registry = new ProviderRegistry();
- * const provider = await createProvider({ type: "claude-agent-sdk", cwd: process.cwd() });
+ * const provider = await createProvider({ type: "pi-sdk", cwd: process.cwd() });
  * registry.register(provider);
  *
  * // 2. Create endpoints and session manager
@@ -73,10 +72,7 @@ export type {
   AnnotateContext,
   ParentSession,
   CreateSessionOptions,
-  ClaudeAgentSDKConfig,
-  CodexSDKConfig,
   PiSDKConfig,
-  OpenCodeConfig,
 } from "./types.ts";
 
 // Provider registry
