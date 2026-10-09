@@ -1,0 +1,691 @@
+import { isSameOriginOrNoOrigin } from "../generated/request-origin.ts";
+import { randomUUID } from "node:crypto";
+import { likelyAppHtmlEncoding, prewarmAppHtml } from "../generated/app-html.ts";
+import { createServer } from "node:http";
+
+import { contentHash, deleteDraft, loadDraft } from "../generated/draft.ts";
+import { countUnsentDraftComments } from "../generated/host-control.ts";
+import { handleHostControl, resolveHostControlToken, type HostControl } from "./host-control.ts";
+import {
+	type ArchivedPlan,
+	generateSlug,
+	getPlanVersion,
+	getPlanVersionPath,
+	getVersionCount,
+	listArchivedPlans,
+	listVersions,
+	readArchivedPlan,
+	saveAnnotations,
+	saveFinalSnapshot,
+	saveToHistory,
+} from "../generated/storage.ts";
+import { createEditorAnnotationHandler } from "./annotations.ts";
+import { createExternalAnnotationHandler } from "./external-annotations.ts";
+import {
+	handleDraftRequest,
+	handleFavicon,
+	handleImageRequest,
+	handleReferenceSkillsRequest,
+	handleReferenceSkillContentRequest,
+	readDraftGenerationFromBody,
+	handleSaveNotesRequest,
+	handleUploadRequest,
+} from "./handlers.ts";
+import { handleApiNotFound, html, json, parseBody, requestUrl } from "./helpers.ts";
+import { createPiAIRuntime, handlePiAIRequest } from "./ai-runtime.ts";
+import { openEditorDiff } from "./ide.ts";
+import {
+	type BearConfig,
+	type IntegrationResult,
+	type ObsidianConfig,
+	type OctarineConfig,
+	saveToBear,
+	saveToObsidian,
+	saveToOctarine,
+} from "./integrations.ts";
+import { buildAdvertisedUrl, isRemoteSession, listenOnPort } from "./network.ts";
+
+import { agentToolSaveFailed, loadConfig, saveConfig, detectGitUser, getServerConfig, resolveAIEnabled, resolveFeedbackHistory, resolveSharingEnabled } from "../generated/config.ts";
+import { appendFeedbackRecord, type FeedbackDecision } from "../generated/feedback-archive.ts";
+import { isFaviconStyle, type FaviconStyle } from "../generated/favicon.ts";
+import { readImprovementHook, getImprovementHookExpectedPath } from "../generated/improvement-hooks.ts";
+import { composeImproveContext } from "../generated/pfm-reminder.ts";
+import { detectProjectName, getRepoInfo } from "./project.ts";
+import {
+	handleDocRequest,
+	handleDocExistsRequest,
+	handleFileBrowserRequest,
+	handleObsidianDocRequest,
+	handleObsidianFilesRequest,
+	handleObsidianVaultsRequest,
+} from "./reference.ts";
+import { closeAllFileBrowserWatchers, handleFileBrowserStreamRequest } from "./file-browser-watch.ts";
+import { warmFileListCache } from "../generated/resolve-file.ts";
+import { isArchiveDocumentMutation } from "../generated/archive-mode.ts";
+import type { SessionBridge } from "../generated/ai/session-bridge.ts";
+
+export interface PlanReviewDecision {
+	approved: boolean;
+	feedback?: string;
+	savedPath?: string;
+	agentSwitch?: string;
+	permissionMode?: string;
+	/** The reviewer only answered the plan's questions (`answersOnly: true` on /api/deny). */
+	answersOnly?: boolean;
+	/**
+	 * The exact plan text the decision was made on (the revision on screen;
+	 * revisions pushed by `updatePlan` change it). Execution works from this
+	 * snapshot, never from the plan file, which may hold unreviewed edits.
+	 */
+	plan?: string;
+}
+
+/** What `updatePlan` did with a revised plan pushed into the open review. */
+export interface PlanRevisionResult {
+	/** Revision counter the browser tab compares against (0 = the plan the server started with). */
+	revision: number;
+	/** History version number of the plan now under review. */
+	version: number;
+	/** The pushed plan matched the one already under review: nothing changed. */
+	unchanged: boolean;
+}
+
+export interface PlanServerResult {
+	reviewId: string;
+	port: number;
+	portSource: "env" | "remote-default" | "random";
+	url: string;
+	waitForDecision: () => Promise<PlanReviewDecision>;
+	onDecision: (listener: (result: PlanReviewDecision) => void | Promise<void>) => () => void;
+	/**
+	 * Push a revised plan into this still-open review (non-blocking Pi plan
+	 * review). Saved to version history like a resubmission; the open tab
+	 * picks it up through `/api/plan/revision`. Returns null once a decision
+	 * has settled (or in archive mode): the caller opens a new review instead.
+	 */
+	updatePlan: (plan: string) => PlanRevisionResult | null;
+	waitForDone?: () => Promise<void>;
+	stop: () => void;
+	/** Host-only status (no close: a plan review ends with the reviewer's decision). */
+	hostControl: HostControl;
+}
+
+export async function startPlanReviewServer(options: {
+	/** Turns on `/api/host/status` for a caller in another process (never in remote mode or archive mode). */
+	hostControlToken?: string;
+	plan: string;
+	htmlContent: string;
+	origin?: string;
+	permissionMode?: string;
+	sharingEnabled?: boolean;
+	shareBaseUrl?: string;
+	pasteApiUrl?: string;
+	mode?: "archive";
+	customPlanPath?: string | null;
+	/** "Ask this session": the in-process bridge to the Pi session that submitted this plan. */
+	sessionBridge?: SessionBridge;
+	/**
+	 * The caller pushes revised plans into this open review (`updatePlan`).
+	 * Advertised to the tab as `planRevision` on /api/plan, which makes it poll
+	 * /api/plan/revision; off by default so a review nobody revises never polls.
+	 */
+	planRevisions?: boolean;
+}): Promise<PlanServerResult> {
+	const gitUser = detectGitUser();
+	const sharingEnabled =
+		options.sharingEnabled ?? resolveSharingEnabled(loadConfig());
+	const shareBaseUrl =
+		(options.shareBaseUrl ?? process.env.PLANNOTATOR_SHARE_URL) || undefined;
+	const pasteApiUrl =
+		(options.pasteApiUrl ?? process.env.PLANNOTATOR_PASTE_URL) || undefined;
+
+	// --- Archive mode setup ---
+	let archivePlans: ArchivedPlan[] = [];
+	let initialArchivePlan = "";
+	let resolveDone: (() => void) | undefined;
+	let donePromise: Promise<void> | undefined;
+
+	if (options.mode === "archive") {
+		archivePlans = listArchivedPlans(options.customPlanPath ?? undefined);
+		initialArchivePlan =
+			archivePlans.length > 0
+				? (readArchivedPlan(
+						archivePlans[0].filename,
+						options.customPlanPath ?? undefined,
+					) ?? "")
+				: "";
+		donePromise = new Promise<void>((resolve) => {
+			resolveDone = resolve;
+		});
+	}
+
+	// --- Plan review mode setup (skip in archive mode) ---
+	// The plan under review, its history slot and the version diff are `let`:
+	// a non-blocking Pi plan review stays open while the agent revises, and
+	// `updatePlan` swaps all of them for the revised plan (see below).
+	let currentPlan = options.plan;
+	// Bumped by every accepted `updatePlan`. The tab polls it and echoes the
+	// revision it shows on approve/deny, so a decision on a plan the agent has
+	// since replaced is refused (409) instead of approving unseen text.
+	let planRevision = 0;
+	const repoInfo = options.mode !== "archive" ? getRepoInfo() : null;
+	let slug = options.mode !== "archive" ? generateSlug(options.plan) : "";
+	const project = options.mode !== "archive" ? detectProjectName() : "";
+	let historyResult =
+		options.mode !== "archive"
+			? saveToHistory(project, slug, options.plan)
+			: { version: 0, path: "", isNew: false };
+	let previousPlan =
+		options.mode !== "archive" && historyResult.version > 1
+			? getPlanVersion(project, slug, historyResult.version - 1)
+			: null;
+	let versionInfo =
+		options.mode !== "archive"
+			? {
+					version: historyResult.version,
+					totalVersions: getVersionCount(project, slug),
+					project,
+				}
+			: null;
+
+	// Durable feedback archive (Node mirror of packages/server/index.ts).
+	// Appends the decision to feedback/{project}/index.jsonl at settlement
+	// time, independent of the client-side planSave setting, and names the
+	// history version file rather than copying the plan text. Plan policy on
+	// failure: log and proceed — an approval is never blocked on the archive.
+	//
+	// Data-dir asymmetry worth knowing: getPlanVersionPath resolves against the
+	// data directory generated/storage.ts captured at import time, while the
+	// archive resolves it per call. They agree in every real run and can only
+	// disagree if PLANNOTATOR_DATA_DIR changes mid-process, in which case
+	// planVersionFile names where the version file was actually written.
+	const archivePlanDecision = (decision: FeedbackDecision, feedback?: string): void => {
+		if (options.mode === "archive") return;
+		if (!resolveFeedbackHistory(loadConfig())) return;
+		const version = versionInfo?.version ?? 0;
+		appendFeedbackRecord({
+			project,
+			origin: options.origin ?? "pi",
+			surface: "plan",
+			decision,
+			target: {
+				slug,
+				...(version > 0
+					? {
+							planVersion: version,
+							planVersionFile: getPlanVersionPath(project, slug, version) ?? undefined,
+						}
+					: {}),
+			},
+			feedback,
+		});
+	};
+
+	const reviewId = randomUUID();
+	let resolveDecision!: (result: PlanReviewDecision) => void;
+	const decisionListeners = new Set<(result: PlanReviewDecision) => void | Promise<void>>();
+	let decisionSettled = false;
+	// Set the moment a decision passes the revision check, before its awaits
+	// (note integrations): updatePlan then refuses, so the plan a decision
+	// names cannot be swapped while that decision is still being recorded.
+	let decisionClaimed = false;
+	const decisionPromise = new Promise<PlanReviewDecision>((r) => {
+		resolveDecision = r;
+	});
+	const publishDecision = (result: PlanReviewDecision): boolean => {
+		if (decisionSettled) return false;
+		decisionSettled = true;
+		resolveDecision(result);
+		for (const listener of decisionListeners) {
+			Promise.resolve(listener(result)).catch((error) => {
+				console.error("[Plan Review] Decision listener failed:", error);
+			});
+		}
+		return true;
+	};
+
+	// Draft key for annotation persistence
+	const draftKey = options.mode !== "archive" ? contentHash(options.plan) : "";
+
+	// Host-only status: mirrors packages/server/index.ts.
+	const hostControlToken = options.mode === "archive" ? undefined : resolveHostControlToken(options.hostControlToken);
+	const hostControl: HostControl = {
+		status: () => ({
+			kind: "plan",
+			documents: [],
+			unsentAnnotations: draftKey ? countUnsentDraftComments(loadDraft(draftKey)) : 0,
+			decided: decisionSettled || decisionClaimed,
+		}),
+	};
+
+	// Editor annotations (in-memory, VS Code integration — skip in archive mode)
+	const editorAnnotations = options.mode !== "archive" ? createEditorAnnotationHandler() : null;
+	const externalAnnotations = options.mode !== "archive" ? createExternalAnnotationHandler("plan") : null;
+	// Set once bound: "Ask this session" answers only a loopback Host with this port.
+	let boundPort: number | undefined;
+	const aiRuntime = options.mode !== "archive" && resolveAIEnabled()
+		? await createPiAIRuntime({ sessionBridge: options.sessionBridge, getServerPort: () => boundPort })
+		: null;
+
+	/**
+	 * A decision body names the revision the tab was showing. A number that
+	 * differs from the live one means the agent revised the plan after the tab
+	 * last loaded it: refuse, so the reviewer sees the new text first. A body
+	 * without the field (an older client, or a host that never revises) passes.
+	 */
+	const isStaleRevision = (body: Record<string, unknown>): boolean =>
+		typeof body.planRevision === "number" && body.planRevision !== planRevision;
+	const refuseStaleRevision = (res: Parameters<typeof json>[0]): void => {
+		json(res, {
+			error: "The plan was revised while you were reviewing it. Review the new version, then decide again.",
+			code: "plan_revised",
+			planRevision,
+		}, 409);
+	};
+
+	// Lazy cache for in-session archive tab
+	let cachedArchivePlans: ArchivedPlan[] | null = null;
+
+	const server = createServer(async (req, res) => {
+		const url = requestUrl(req);
+
+		if (handleHostControl(req, res, url, { token: hostControlToken, getServerPort: () => boundPort, control: hostControl })) return;
+
+		if (url.pathname === "/api/done" && req.method === "POST") {
+			resolveDone?.();
+			json(res, { ok: true });
+		} else if (
+			options.mode === "archive" &&
+			isArchiveDocumentMutation(req.method ?? "GET", url.pathname)
+		) {
+			json(res, { error: "Archive is read-only" }, 403);
+		} else if (url.pathname === "/api/archive/plans" && req.method === "GET") {
+			const customPath = url.searchParams.get("customPath") || undefined;
+			if (!cachedArchivePlans)
+				cachedArchivePlans = listArchivedPlans(customPath);
+			json(res, { plans: cachedArchivePlans });
+		} else if (url.pathname === "/api/archive/plan" && req.method === "GET") {
+			const filename = url.searchParams.get("filename");
+			const customPath = url.searchParams.get("customPath") || undefined;
+			if (!filename) {
+				json(res, { error: "Missing filename" }, 400);
+				return;
+			}
+			const markdown = readArchivedPlan(filename, customPath);
+			if (markdown === null) {
+				json(res, { error: "Not found" }, 404);
+				return;
+			}
+			json(res, { markdown, filepath: filename });
+		} else if (url.pathname === "/api/plan/version") {
+			const vParam = url.searchParams.get("v");
+			if (!vParam) {
+				json(res, { error: "Missing v parameter" }, 400);
+				return;
+			}
+			const v = parseInt(vParam, 10);
+			if (Number.isNaN(v) || v < 1) {
+				json(res, { error: "Invalid version number" }, 400);
+				return;
+			}
+			const content = getPlanVersion(project, slug, v);
+			if (content === null) {
+				json(res, { error: "Version not found" }, 404);
+				return;
+			}
+			json(res, { plan: content, version: v });
+		} else if (url.pathname === "/api/plan/revision" && req.method === "GET" && options.mode !== "archive") {
+			json(res, { revision: planRevision, decided: decisionSettled });
+		} else if (url.pathname === "/api/plan/versions") {
+			json(res, { project, slug, versions: listVersions(project, slug) });
+		} else if (url.pathname === "/api/plan") {
+			if (options.mode === "archive") {
+				json(res, {
+					plan: initialArchivePlan,
+					origin: options.origin ?? "pi",
+					mode: "archive",
+					archivePlans,
+					sharingEnabled,
+					shareBaseUrl,
+					serverConfig: getServerConfig(gitUser, "pi"),
+				});
+			} else {
+				json(res, {
+					plan: currentPlan,
+					// Advertises that this review receives revised plans while open;
+					// the tab then polls /api/plan/revision.
+					...(options.planRevisions ? { planRevision } : {}),
+					origin: options.origin ?? "pi",
+					permissionMode: options.permissionMode,
+					previousPlan,
+					versionInfo,
+					sharingEnabled,
+					shareBaseUrl,
+					pasteApiUrl,
+					repoInfo,
+					projectRoot: process.cwd(),
+					serverConfig: getServerConfig(gitUser, "pi"),
+				});
+			}
+		} else if (url.pathname === "/api/hooks/status" && req.method === "GET") {
+			const config = loadConfig();
+			const hook = readImprovementHook("enterplanmode-improve");
+			const pfmEnabled = config.pfmReminder === true;
+			const composed = composeImproveContext({ pfmEnabled, improvementHookContent: hook?.content ?? null });
+			json(res, {
+				pfmReminder: { enabled: pfmEnabled },
+				improvementHook: {
+					present: !!hook,
+					filePath: hook?.filePath ?? getImprovementHookExpectedPath("enterplanmode-improve"),
+					fileSize: hook?.content?.length ?? null,
+					content: hook?.content ?? null,
+				},
+				composedLength: composed?.length ?? null,
+			});
+		} else if (url.pathname === "/api/config" && req.method === "POST") {
+			if (!isSameOriginOrNoOrigin(req.headers.origin ?? null, req.headers.host ?? "", req.headers["sec-fetch-site"])) {
+				json(res, { error: "Cross-origin config writes are not allowed" }, 403);
+				return;
+			}
+			try {
+				const body = (await parseBody(req)) as { displayName?: string; diffOptions?: Record<string, unknown>; theme?: Record<string, unknown>; favicon?: FaviconStyle; autoUpdate?: unknown; agentTool?: unknown; conventionalComments?: boolean; conventionalLabels?: unknown[] | null; pfmReminder?: boolean };
+				const toSave: Record<string, unknown> = {};
+				if (body.displayName !== undefined) toSave.displayName = body.displayName;
+				if (body.diffOptions !== undefined) toSave.diffOptions = body.diffOptions;
+				if (body.theme !== undefined) toSave.theme = body.theme;
+				if (isFaviconStyle(body.favicon)) toSave.favicon = body.favicon;
+				if (typeof body.autoUpdate === "boolean") toSave.autoUpdate = body.autoUpdate;
+				// The agent tool switch: boolean only; it applies to the next session.
+				if (typeof body.agentTool === "boolean") toSave.agentTool = body.agentTool;
+				if (body.conventionalComments !== undefined) toSave.conventionalComments = body.conventionalComments;
+				if (body.conventionalLabels !== undefined) toSave.conventionalLabels = body.conventionalLabels;
+				if (body.pfmReminder !== undefined) toSave.pfmReminder = body.pfmReminder;
+				if (Object.keys(toSave).length > 0) saveConfig(toSave as Parameters<typeof saveConfig>[0]);
+				if (agentToolSaveFailed(toSave)) return json(res, { error: "Could not save the setting to config.json." }, 500);
+				json(res, { ok: true });
+			} catch {
+				json(res, { error: "Invalid request" }, 400);
+			}
+		} else if (url.pathname === "/api/image") {
+			handleImageRequest(res, url);
+		} else if (url.pathname === "/api/upload" && req.method === "POST") {
+			await handleUploadRequest(req, res);
+		} else if (url.pathname === "/api/draft") {
+			await handleDraftRequest(req, res, draftKey);
+		} else if (editorAnnotations && (await editorAnnotations.handle(req, res, url))) {
+			return;
+		} else if (externalAnnotations && (await externalAnnotations.handle(req, res, url))) {
+			return;
+		} else if (url.pathname.startsWith("/api/ai/") && await handlePiAIRequest(req, res, url, aiRuntime)) {
+			return;
+		} else if (url.pathname === "/api/doc" && req.method === "GET") {
+			await handleDocRequest(res, url);
+		} else if (url.pathname === "/api/doc/exists" && req.method === "POST") {
+			await handleDocExistsRequest(res, req);
+		} else if (url.pathname === "/api/obsidian/vaults") {
+			handleObsidianVaultsRequest(res);
+		} else if (url.pathname === "/api/skills" && req.method === "GET") {
+			handleReferenceSkillsRequest(res);
+		} else if (url.pathname === "/api/skills/content" && req.method === "GET") {
+			handleReferenceSkillContentRequest(res, url);
+		} else if (url.pathname === "/api/reference/obsidian/files" && req.method === "GET") {
+			handleObsidianFilesRequest(res, url);
+		} else if (url.pathname === "/api/reference/obsidian/doc" && req.method === "GET") {
+			handleObsidianDocRequest(res, url);
+		} else if (url.pathname === "/api/reference/files" && req.method === "GET") {
+			await handleFileBrowserRequest(res, url);
+		} else if (url.pathname === "/api/reference/files/stream" && req.method === "GET") {
+			handleFileBrowserStreamRequest(req, res, url);
+			return;
+		} else if (
+			url.pathname === "/api/plan/vscode-diff" &&
+			req.method === "POST"
+		) {
+			try {
+				const body = await parseBody(req);
+				const baseVersion = body.baseVersion as number;
+				if (!baseVersion) {
+					json(res, { error: "Missing baseVersion" }, 400);
+					return;
+				}
+				const basePath = getPlanVersionPath(project, slug, baseVersion);
+				if (!basePath) {
+					json(res, { error: `Version ${baseVersion} not found` }, 404);
+					return;
+				}
+				const result = await openEditorDiff(basePath, historyResult.path);
+				if ("error" in result) {
+					json(res, { error: result.error }, 500);
+					return;
+				}
+				json(res, { ok: true });
+			} catch (err) {
+				json(
+					res,
+					{
+						error:
+							err instanceof Error
+								? err.message
+								: "Failed to open VS Code diff",
+					},
+					500,
+				);
+			}
+		} else if (url.pathname === "/api/agents" && req.method === "GET") {
+			json(res, { agents: [] });
+		} else if (url.pathname === "/favicon.png") {
+			handleFavicon(res);
+		} else if (url.pathname === "/api/save-notes" && req.method === "POST") {
+			await handleSaveNotesRequest(req, res);
+		} else if (url.pathname === "/api/approve" && req.method === "POST") {
+			if (decisionSettled) {
+				json(res, { ok: true, duplicate: true });
+				return;
+			}
+			let feedback: string | undefined;
+			let agentSwitch: string | undefined;
+			let requestedPermissionMode: string | undefined;
+			let planSaveEnabled = true;
+			let planSaveCustomPath: string | undefined;
+			let draftGeneration: number | undefined;
+			let body: Record<string, unknown> = {};
+			try {
+				body = await parseBody(req);
+			} catch {
+				body = {};
+			}
+			if (isStaleRevision(body)) {
+				refuseStaleRevision(res);
+				return;
+			}
+			decisionClaimed = true;
+			try {
+				draftGeneration = readDraftGenerationFromBody(body);
+				if (body.feedback) feedback = body.feedback as string;
+				if (body.agentSwitch) agentSwitch = body.agentSwitch as string;
+				if (body.permissionMode)
+					requestedPermissionMode = body.permissionMode as string;
+				if (body.planSave !== undefined) {
+					const ps = body.planSave as { enabled: boolean; customPath?: string };
+					planSaveEnabled = ps.enabled;
+					planSaveCustomPath = ps.customPath;
+				}
+				// Run note integrations in parallel
+				const integrationResults: Record<string, IntegrationResult> = {};
+				const integrationPromises: Promise<void>[] = [];
+				const obsConfig = body.obsidian as ObsidianConfig | undefined;
+				const bearConfig = body.bear as BearConfig | undefined;
+				const octConfig = body.octarine as OctarineConfig | undefined;
+				if (obsConfig?.vaultPath && obsConfig?.plan) {
+					integrationPromises.push(
+						saveToObsidian(obsConfig).then((r) => {
+							integrationResults.obsidian = r;
+						}),
+					);
+				}
+				if (bearConfig?.plan) {
+					integrationPromises.push(
+						saveToBear(bearConfig).then((r) => {
+							integrationResults.bear = r;
+						}),
+					);
+				}
+				if (octConfig?.plan && octConfig?.workspace) {
+					integrationPromises.push(
+						saveToOctarine(octConfig).then((r) => {
+							integrationResults.octarine = r;
+						}),
+					);
+				}
+				await Promise.allSettled(integrationPromises);
+				for (const [name, result] of Object.entries(integrationResults)) {
+					if (!result?.success && result)
+						console.error(`[${name}] Save failed: ${result.error}`);
+				}
+			} catch (err) {
+				console.error(`[Integration] Error:`, err);
+			}
+			// Save annotations and final snapshot
+			let savedPath: string | undefined;
+			if (planSaveEnabled) {
+				const annotations = feedback || "";
+				if (annotations) saveAnnotations(slug, annotations, planSaveCustomPath);
+				savedPath = saveFinalSnapshot(
+					slug,
+					"approved",
+					currentPlan,
+					annotations,
+					planSaveCustomPath,
+				);
+			}
+			// Archive before the draft delete (#678 ordering, generalized).
+			archivePlanDecision(
+				typeof feedback === "string" && feedback.trim() ? "approved-with-notes" : "approved",
+				feedback,
+			);
+			deleteDraft(draftKey, draftGeneration);
+			const effectivePermissionMode = requestedPermissionMode || options.permissionMode;
+			publishDecision({
+				approved: true,
+				plan: currentPlan,
+				feedback,
+				savedPath,
+				agentSwitch,
+				permissionMode: effectivePermissionMode,
+			});
+			json(res, { ok: true, savedPath });
+		} else if (url.pathname === "/api/deny" && req.method === "POST") {
+			if (decisionSettled) {
+				json(res, { ok: true, duplicate: true });
+				return;
+			}
+			let feedback = "Plan rejected by user";
+			let planSaveEnabled = true;
+			let planSaveCustomPath: string | undefined;
+			let draftGeneration: number | undefined;
+			let answersOnly = false;
+			let body: Record<string, unknown> = {};
+			try {
+				body = await parseBody(req);
+			} catch {
+				body = {};
+			}
+			if (isStaleRevision(body)) {
+				refuseStaleRevision(res);
+				return;
+			}
+			decisionClaimed = true;
+			try {
+				draftGeneration = readDraftGenerationFromBody(body);
+				feedback = (body.feedback as string) || feedback;
+				answersOnly = body.answersOnly === true;
+				if (body.planSave !== undefined) {
+					const ps = body.planSave as { enabled: boolean; customPath?: string };
+					planSaveEnabled = ps.enabled;
+					planSaveCustomPath = ps.customPath;
+				}
+			} catch {
+				/* use default feedback */
+			}
+			let savedPath: string | undefined;
+			if (planSaveEnabled) {
+				saveAnnotations(slug, feedback, planSaveCustomPath);
+				savedPath = saveFinalSnapshot(
+					slug,
+					"denied",
+					currentPlan,
+					feedback,
+					planSaveCustomPath,
+				);
+			}
+			archivePlanDecision("denied", feedback);
+			deleteDraft(draftKey, draftGeneration);
+			publishDecision({ approved: false, feedback, savedPath, ...(answersOnly ? { answersOnly: true } : {}) });
+			json(res, { ok: true, savedPath });
+		} else if (url.pathname.startsWith("/api/")) {
+			handleApiNotFound(res, url.pathname);
+		} else {
+			await html(req, res, options.htmlContent, isRemoteSession());
+		}
+	});
+
+	const { port, portSource } = await listenOnPort(server);
+	boundPort = port;
+	// Remote sessions serve the app page compressed (#1617); start gzip (what
+	// browsers ask for over plain http) now so the first load does not wait.
+	if (isRemoteSession()) prewarmAppHtml(options.htmlContent, likelyAppHtmlEncoding(false));
+
+	// Mirror the Bun server: bind first, then warm through the async shared walk.
+	void warmFileListCache(process.cwd(), "code");
+
+	return {
+		reviewId,
+		port,
+		portSource,
+		url: buildAdvertisedUrl(port),
+		waitForDecision: () => decisionPromise,
+		hostControl,
+		onDecision: (listener) => {
+			decisionListeners.add(listener);
+			return () => {
+				decisionListeners.delete(listener);
+			};
+		},
+		updatePlan: (plan) => {
+			if (options.mode === "archive" || decisionSettled || decisionClaimed) return null;
+			if (plan === currentPlan) {
+				return { revision: planRevision, version: versionInfo?.version ?? 0, unchanged: true };
+			}
+			// Same bookkeeping a resubmission gets from a fresh server: slug from
+			// the revised heading, a new history version, and the previous
+			// version of that slug as the diff base.
+			slug = generateSlug(plan);
+			historyResult = saveToHistory(project, slug, plan);
+			previousPlan = historyResult.version > 1 ? getPlanVersion(project, slug, historyResult.version - 1) : null;
+			versionInfo = {
+				version: historyResult.version,
+				totalVersions: getVersionCount(project, slug),
+				project,
+			};
+			currentPlan = plan;
+			planRevision += 1;
+			return { revision: planRevision, version: historyResult.version, unchanged: false };
+		},
+		...(donePromise && { waitForDone: () => donePromise }),
+		stop: () => {
+			// try/finally: a throwing dispose must never leave the listener bound.
+			try {
+				closeAllFileBrowserWatchers();
+				aiRuntime?.dispose();
+			} finally {
+				server.close();
+				// close() only stops the listener; drain browser keep-alive sockets so a
+				// stopped session's connections die immediately instead of at the
+				// browser's whim (parity with Bun's server.stop(), which closes idle
+				// connections). Guarded: jiti can run under hosts whose node:http lacks
+				// closeAllConnections.
+				server.closeAllConnections?.();
+			}
+		},
+	};
+}

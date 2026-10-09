@@ -1,0 +1,18 @@
+Plannotator Pi CT — standalone packaging and release adaptation, 2026.
+Derived from Plannotator by backnotprop and contributors:
+https://github.com/backnotprop/plannotator
+Extraction source: https://github.com/FadhelHaidar/plannotator
+Branch: compact-plan-tracker
+Commit: cd97439a0b578c070f098813ff1c973c914cbfbd
+
+Original copyright/license notices are preserved. The inherited project and Pi
+extension are MIT OR Apache-2.0; packages/ui and packages/core are Apache-2.0.
+See LICENSE-MIT and LICENSE-APACHE. This distribution does not relicense those
+components. Compact tracker/keybinding customizations originate in the source
+fork. FadhelHaidar maintains this standalone extraction's packaging/release seam.
+
+Standalone changes are documented in EXTRACTION.md and the root README.md:
+reduced manifests/workspace/CI, CT version metadata, frozen source bootstrap,
+package closure smoke checks and installation/provenance documentation.
+Browser UI and Pi runtime implementations have not been redesigned.
+Third-party assets and dependencies retain their respective notices/licenses.
