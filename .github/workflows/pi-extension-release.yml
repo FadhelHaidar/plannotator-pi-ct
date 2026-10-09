@@ -58,6 +58,7 @@ jobs:
         run: |
           bun test --timeout 15000 apps/pi-extension
           bun run typecheck:pi
+          bunx tsc --noEmit -p packages/ui/tsconfig.json
           bun test scripts/install-pi-source.test.ts
           node --test .github/scripts/bump-pi-version.test.mjs \
             scripts/smoke-pi-package.test.mjs
