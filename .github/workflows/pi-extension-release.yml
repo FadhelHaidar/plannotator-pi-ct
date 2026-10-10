@@ -140,7 +140,7 @@ jobs:
       # already exist on npm and list this workflow as a trusted publisher.
       - name: Publish versioned package with provenance
         env:
-          PACKAGE_NAME: '@fadhelhaidar/plannotator-pi-ct'
+          PACKAGE_NAME: '@fadhelhaidar/pi-plannotator-compact'
           PACKAGE_VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail

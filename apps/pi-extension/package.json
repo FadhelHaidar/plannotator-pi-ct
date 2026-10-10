@@ -1,5 +1,5 @@
 {
-  "name": "@fadhelhaidar/plannotator-pi-ct",
+  "name": "@fadhelhaidar/pi-plannotator-compact",
   "version": "0.1.1",
   "type": "module",
   "description": "Plannotator Pi extension - interactive plan review with annotations, annotate agent messages, and review code/PRs",
@@ -7,12 +7,12 @@
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/FadhelHaidar/plannotator-pi-ct.git",
+    "url": "git+https://github.com/FadhelHaidar/pi-plannotator-compact.git",
     "directory": "apps/pi-extension"
   },
-  "homepage": "https://github.com/FadhelHaidar/plannotator-pi-ct",
+  "homepage": "https://github.com/FadhelHaidar/pi-plannotator-compact",
   "bugs": {
-    "url": "https://github.com/FadhelHaidar/plannotator-pi-ct/issues"
+    "url": "https://github.com/FadhelHaidar/pi-plannotator-compact/issues"
   },
   "keywords": [
     "pi-package",

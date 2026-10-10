@@ -1,18 +1,18 @@
-# Plannotator Pi CT extension
+# Pi Plannotator Compact extension
 
-Standalone Plannotator integration for the [Pi coding agent](https://github.com/earendil-works/pi), published as **`@fadhelhaidar/plannotator-pi-ct`** and as a prebuilt release from **FadhelHaidar/plannotator-pi-ct**. It retains browser plan review, annotations, code/PR review, the three-mode compact tracker and **Alt+P** plan-mode shortcut from the `compact-plan-tracker` fork.
+Standalone Plannotator integration for the [Pi coding agent](https://github.com/earendil-works/pi), published as **`@fadhelhaidar/pi-plannotator-compact`** and as a prebuilt release from **FadhelHaidar/pi-plannotator-compact**. It retains browser plan review, annotations, code/PR review, the three-mode compact tracker and **Alt+P** plan-mode shortcut from the `compact-plan-tracker` fork.
 
 ## Install, update and remove
 
 The prebuilt GitHub Release needs no Bun or local browser build:
 
 ```bash
-pi install npm:@fadhelhaidar/plannotator-pi-ct
+pi install npm:@fadhelhaidar/pi-plannotator-compact
 # Or install the prebuilt GitHub Release:
-pi install 'npm:@fadhelhaidar/plannotator-pi-ct@https://github.com/FadhelHaidar/plannotator-pi-ct/releases/latest/download/plannotator-pi-extension.tgz'
+pi install 'npm:@fadhelhaidar/pi-plannotator-compact@https://github.com/FadhelHaidar/pi-plannotator-compact/releases/latest/download/plannotator-pi-extension.tgz'
 pi update --extensions
 # Restart Pi or /reload after updating.
-pi remove npm:@fadhelhaidar/plannotator-pi-ct
+pi remove npm:@fadhelhaidar/pi-plannotator-compact
 ```
 
 The independent release series uses `vX.Y.Z`; the first standalone version is `0.1.1`, following the old fork's `0.1.0`. Both npm and GitHub Release artifacts use the fork-scoped package identity.
@@ -36,8 +36,8 @@ Pi 0.79 introduced trust for repository-local settings, instructions, resources 
 From the standalone repository root, with Node 22+, npm, Bun 1.3.14, bash, git and network access:
 
 ```bash
-git clone https://github.com/FadhelHaidar/plannotator-pi-ct.git
-cd plannotator-pi-ct
+git clone https://github.com/FadhelHaidar/pi-plannotator-compact.git
+cd pi-plannotator-compact
 npm run install:dev
 bun run build:pi
 bun run test:pi
@@ -50,9 +50,9 @@ pi install ./apps/pi-extension
 
 `install:dev` installs frozen Bun workspace dependencies with a temporary workspace list, then restores the npm-safe root manifest. Do not run another installer concurrently or use plain `bun install` (it may rewrite the lock). `build:pi` builds review first, plan/annotation second, then vendors backend modules, managed CallDiff inputs and the bundled skill. Rebuild after changing sources; ignored `generated/` is not the editing source. Packaging produces `artifacts/plannotator-pi-extension.tgz`.
 
-Git-source installation (`pi install git:github.com/FadhelHaidar/plannotator-pi-ct`) runs this build via postinstall and requires the same tools and enabled lifecycle scripts. If interrupted, ensure no bootstrap is running, restore root `package.json` from Git if it still has temporary workspaces, remove `.pi-source-install.lock`, then rerun the bootstrap/build. Never remove a live install's lock. Native WebTUI/node-pty dependencies may need approval when npm blocks install scripts.
+Git-source installation (`pi install git:github.com/FadhelHaidar/pi-plannotator-compact`) runs this build via postinstall and requires the same tools and enabled lifecycle scripts. If interrupted, ensure no bootstrap is running, restore root `package.json` from Git if it still has temporary workspaces, remove `.pi-source-install.lock`, then rerun the bootstrap/build. Never remove a live install's lock. Native WebTUI/node-pty dependencies may need approval when npm blocks install scripts.
 
-The [repository README](https://github.com/FadhelHaidar/plannotator-pi-ct#readme) covers complete tests, release bootstrap, source closure, manual parity and upstream porting. The bundled `/skill:plannotator` retains external CLI reference material; this Pi-only repository does not ship that CLI.
+The [repository README](https://github.com/FadhelHaidar/pi-plannotator-compact#readme) covers complete tests, release bootstrap, source closure, manual parity and upstream porting. The bundled `/skill:plannotator` retains external CLI reference material; this Pi-only repository does not ship that CLI.
 
 ## Origin and licenses
 
@@ -112,7 +112,7 @@ Control it with:
 Other Pi extensions can enter, exit, toggle, or query Plannotator plan mode through the shared Pi event bus without invoking the `/plannotator-plan-mode` slash command:
 
 ```ts
-import { PLANNOTATOR_REQUEST_CHANNEL } from "@fadhelhaidar/plannotator-pi-ct/plannotator-events";
+import { PLANNOTATOR_REQUEST_CHANNEL } from "@fadhelhaidar/pi-plannotator-compact/plannotator-events";
 
 const response = await new Promise((resolve) => {
   pi.events.emit(PLANNOTATOR_REQUEST_CHANNEL, {
@@ -278,7 +278,7 @@ After approval, Plannotator returns to idle and emits `plannotator:plan-approved
 Companion extensions can subscribe through the shared event bus:
 
 ```ts
-import { PLANNOTATOR_PLAN_APPROVED_CHANNEL } from "@fadhelhaidar/plannotator-pi-ct/plannotator-events";
+import { PLANNOTATOR_PLAN_APPROVED_CHANNEL } from "@fadhelhaidar/pi-plannotator-compact/plannotator-events";
 import { resolve } from "node:path";
 
 pi.events.on(PLANNOTATOR_PLAN_APPROVED_CHANNEL, (event) => {
