@@ -284,6 +284,38 @@ describe.if(hasDom)('Viewer annotationHeader', () => {
     expect(document.querySelector('textarea')).not.toBeNull();
   });
 
+  test('global comment action toggles its composer closed on the second press', async () => {
+    await mount(<ControlledViewer />);
+
+    const globalComment = actions().querySelector<HTMLButtonElement>('button[title="Add global comment"]');
+    if (!globalComment) throw new Error('Expected global comment action');
+    const composerTextarea = () => document.querySelector('[data-comment-popover] textarea');
+
+    expect(composerTextarea()).toBeNull();
+    expect(globalComment.getAttribute('aria-expanded')).toBe('false');
+    expect(globalComment.classList.contains('bg-muted/50')).toBe(true);
+
+    await act(async () => globalComment.click());
+    expect(composerTextarea()).not.toBeNull();
+    expect(globalComment.getAttribute('aria-expanded')).toBe('true');
+    expect(globalComment.classList.contains('bg-primary')).toBe(true);
+
+    // A real press fires pointerdown before click. The composer's capture-phase
+    // outside-click close must stand down on its own anchor, or it would close
+    // here and the click below would only reopen.
+    await act(async () => {
+      globalComment.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+      globalComment.click();
+    });
+    expect(composerTextarea()).toBeNull();
+    expect(globalComment.getAttribute('aria-expanded')).toBe('false');
+    expect(globalComment.classList.contains('bg-primary')).toBe(false);
+    expect(globalComment.classList.contains('bg-muted/50')).toBe(true);
+
+    await act(async () => globalComment.click());
+    expect(composerTextarea()).not.toBeNull();
+  });
+
   test('measures wide, tight, and narrow wrapped layouts without overlay clearance', async () => {
     await mount(<ControlledViewer />);
 

@@ -119,6 +119,13 @@ interface CommentPopoverProps {
   /** Opt-in composer yield while shift-selecting: 'near' fades the composer,
    *  'over' makes it near-invisible and click-through. Undefined → no-op. */
   yieldState?: CommentPopoverYieldState;
+  /**
+   * Opt-in: pointerdowns on `anchorEl` are not treated as outside clicks, so a
+   * host that opens this composer from the anchor itself can toggle it closed
+   * on the next click (the anchor's click handler owns the decision). Default
+   * false: clicking the anchor closes like any other outside pointerdown.
+   */
+  anchorOwnsToggle?: boolean;
 }
 
 const MAX_POPOVER_WIDTH = 384;
@@ -199,6 +206,7 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
   refocusToken,
   captureStrayKeys = false,
   yieldState,
+  anchorOwnsToggle = false,
 }) => {
   const visibleBounds = useVisibleViewportBounds(16);
   const coarsePointer = hasPrimaryCoarsePointer();
@@ -362,6 +370,10 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
       const target = e.target as Node | null;
       if (!target) return;
       if (popoverRef.current?.contains(target)) return;
+      // A host that toggles this composer from `anchorEl` owns that decision:
+      // let the anchor's click handler close it instead of closing here, which
+      // the following click would only undo by reopening.
+      if (anchorOwnsToggle && anchorEl?.contains(target)) return;
       // Don't close if clicking inside a child portal (AttachmentsButton, ImageAnnotator, etc.)
       const el = target as HTMLElement;
       if (el.closest?.('[data-popover-layer]')) return;
@@ -375,7 +387,7 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
 
     document.addEventListener('pointerdown', handlePointerDown, true);
     return () => document.removeEventListener('pointerdown', handlePointerDown, true);
-  }, [handleClose, mode, targetChips?.length]);
+  }, [anchorEl, anchorOwnsToggle, handleClose, mode, targetChips?.length]);
 
   // Focus choreography (multi-select): after a shift-click adds/removes a
   // target, focus returns to the textarea so typing continues uninterrupted.

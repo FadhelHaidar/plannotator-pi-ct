@@ -140,6 +140,30 @@ describe.if(hasDom)('HtmlViewer mentionSource', () => {
     expect(added[0]?.mentions).toEqual(['user_2']);
   });
 
+  test('the global comment action toggles its composer closed on the second press', async () => {
+    const viewer = await mountViewer({ people: PEOPLE }, []);
+    const button = host!.querySelector<HTMLButtonElement>('button[title="Add global comment"]');
+    if (!button) throw new Error('Global comment button missing');
+
+    expect(document.querySelector('[data-comment-popover]')).toBeNull();
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+
+    await viewer.openGlobalComposer();
+    expect(document.querySelector('[data-comment-popover]')).not.toBeNull();
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    expect(button.classList.contains('bg-primary')).toBe(true);
+
+    // A real press fires pointerdown before click; the composer's capture-phase
+    // outside-click close must stand down on its own anchor.
+    await act(async () => {
+      button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+      button.click();
+    });
+    expect(document.querySelector('[data-comment-popover]')).toBeNull();
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(button.classList.contains('bg-muted/50')).toBe(true);
+  });
+
   test('WITHOUT a source both composers stay as they were: no menu, no mentions key', async () => {
     const added: Annotation[] = [];
     const viewer = await mountViewer(undefined, added);
