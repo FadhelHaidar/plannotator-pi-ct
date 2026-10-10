@@ -56,6 +56,7 @@ class ToolbarErrorBoundary extends React.Component<
 import { CommentPopover, type CommentAskAIHandler } from './CommentPopover';
 import { TaterSpriteSitting } from './TaterSpriteSitting';
 import { AttachmentsButton } from './AttachmentsButton';
+import { documentActionButtonClass } from './documentActionButton';
 import { MessagesIcon } from './icons/MessagesIcon';
 import { DiagramAnchorClaims, DiagramAnchorClaimsContext } from './diagram/anchorClaims';
 import { DiagramBlockPending } from './diagram/DiagramPending';
@@ -1219,7 +1220,7 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(({
       {messagePickerInfo && (
         <button
           onClick={messagePickerInfo.onOpen}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground bg-muted/50 hover:bg-muted rounded-md transition-colors"
+          className={documentActionButtonClass()}
           title="Pick a different message to annotate"
         >
           <MessagesIcon />
@@ -1248,13 +1249,14 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(({
           onClick={() => {
             const anchorEl = globalCommentButtonRef.current;
             if (!anchorEl) return;
-            setViewerCommentPopover({
-              anchorEl,
-              contextText: '',
-              isGlobal: true,
-            });
+            setViewerCommentPopover((current) => (
+              current?.isGlobal && current.anchorEl === anchorEl
+                ? null
+                : { anchorEl, contextText: '', isGlobal: true }
+            ));
           }}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground bg-muted/50 hover:bg-muted rounded-md transition-colors"
+          className={documentActionButtonClass(viewerCommentPopover?.isGlobal === true)}
+          aria-expanded={viewerCommentPopover?.isGlobal === true}
           title="Add global comment"
         >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1267,7 +1269,7 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(({
 
       <button
         onClick={handleCopyPlan}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground bg-muted/50 hover:bg-muted rounded-md transition-colors"
+        className={documentActionButtonClass()}
         title={copied ? 'Copied!' : copyLabel || (linkedDocInfo ? 'Copy file' : 'Copy plan')}
       >
         {copied ? (
@@ -1731,6 +1733,7 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(({
             }`}
             onSubmit={handleViewerCommentSubmit}
             onClose={handleViewerCommentClose}
+            anchorOwnsToggle={viewerCommentPopover.isGlobal}
             mentionSource={mentionSource}
             allowImages={allowImages}
             skillReferences

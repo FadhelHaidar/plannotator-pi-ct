@@ -5,6 +5,12 @@ import { ImageAnnotator } from './ImageAnnotator';
 import type { ImageAttachment } from '../types';
 import { modKey } from '../utils/platform';
 import { getUploadTransport } from '../utils/upload';
+import { documentActionButtonClass } from './documentActionButton';
+
+/** Composer-footer chrome: flat until hover. Kept separate from the document
+ *  action bar so the footer stays visually lighter than the bar. */
+const INLINE_CLASS =
+  'group relative flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors';
 
 /**
  * Derive a clean, human-readable name from an original filename.
@@ -216,7 +222,10 @@ export const AttachmentsButton: React.FC<AttachmentsButtonProps> = ({
         onClick={() => setIsOpen(!isOpen)}
         aria-label="Attachments"
         title="Attachments"
-        className="group relative flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+        aria-expanded={isOpen}
+        className={variant === 'toolbar'
+          ? `group relative ${documentActionButtonClass(isOpen)}`
+          : INLINE_CLASS}
       >
         {/* Show stacked thumbnails if we have images */}
         {images.length > 0 ? (

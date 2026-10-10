@@ -29,6 +29,7 @@ import { AnnotationToolbar } from "../AnnotationToolbar";
 import type { SelectionAction } from "../../utils/selectionActions";
 import type { MentionSource } from "../../utils/mentions";
 import { AttachmentsButton } from "../AttachmentsButton";
+import { documentActionButtonClass } from "../documentActionButton";
 import {
   CommentPopover,
   type CommentAskAIHandler,
@@ -1049,7 +1050,7 @@ export const HtmlViewer = forwardRef<ViewerHandle, HtmlViewerProps>(
         {diffAvailable && onToggleDiff && (
           <button
             onClick={onToggleDiff}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${diffActive ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground bg-muted/50 hover:bg-muted"}`}
+            className={documentActionButtonClass(diffActive, "cursor-pointer")}
             title={diffActive ? "Hide changes vs previous version" : "Show changes vs previous version"}
           >
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1072,9 +1073,12 @@ export const HtmlViewer = forwardRef<ViewerHandle, HtmlViewerProps>(
             onClick={() => {
               const anchorEl = globalCommentButtonRef.current;
               if (!anchorEl) return;
-              setGlobalCommentPopover({ anchorEl, contextText: "" });
+              setGlobalCommentPopover((current) => (
+                current && current.anchorEl === anchorEl ? null : { anchorEl, contextText: "" }
+              ));
             }}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground bg-muted/50 hover:bg-muted rounded-md transition-colors cursor-pointer"
+            className={documentActionButtonClass(globalCommentPopover !== null, "cursor-pointer")}
+            aria-expanded={globalCommentPopover !== null}
             title="Add global comment"
           >
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1285,6 +1289,7 @@ export const HtmlViewer = forwardRef<ViewerHandle, HtmlViewerProps>(
               isGlobal={true}
               onSubmit={handleGlobalCommentSubmit}
               onClose={() => setGlobalCommentPopover(null)}
+              anchorOwnsToggle
               mentionSource={mentionSource}
               skillReferences
               onAskAI={onAskAI}
