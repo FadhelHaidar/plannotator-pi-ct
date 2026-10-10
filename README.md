@@ -1,6 +1,6 @@
-# Plannotator Pi CT
+# Pi Plannotator Compact
 
-A standalone [Pi coding agent](https://github.com/earendil-works/pi) extension with Plannotator's browser plan review, annotations, code/PR review, and the compact execution tracker. This fork publishes as **`@fadhelhaidar/plannotator-pi-ct`**, separately from upstream, and ships both an npm package and a prebuilt GitHub Release tarball.
+A standalone [Pi coding agent](https://github.com/earendil-works/pi) extension with Plannotator's browser plan review, annotations, code/PR review, and the compact execution tracker. This fork publishes as **`@fadhelhaidar/pi-plannotator-compact`**, separately from upstream, and ships both an npm package and a prebuilt GitHub Release tarball.
 
 The inherited UI and runtime are retained, including plan revisions/diffs, markdown/HTML/live-app/folder/bundle annotations, drafts, diagram/question comments, review highlighting workers, AI/session bridges, guide sharing, themes/settings and external review engines. This extraction changes packaging, build scope and releases, not those features.
 
@@ -9,33 +9,39 @@ The inherited UI and runtime are retained, including plan revisions/diffs, markd
 Requires **Pi 0.79.1 or newer** and its supported Node runtime. No Bun, source checkout or browser build is needed:
 
 ```bash
-pi install npm:@fadhelhaidar/plannotator-pi-ct
+pi install npm:@fadhelhaidar/pi-plannotator-compact
 # Or install the prebuilt GitHub Release tarball:
-pi install 'npm:@fadhelhaidar/plannotator-pi-ct@https://github.com/FadhelHaidar/plannotator-pi-ct/releases/latest/download/plannotator-pi-extension.tgz'
+pi install 'npm:@fadhelhaidar/pi-plannotator-compact@https://github.com/FadhelHaidar/pi-plannotator-compact/releases/latest/download/plannotator-pi-extension.tgz'
 ```
 
-The npm package and GitHub tarball both use the fork identity `@fadhelhaidar/plannotator-pi-ct`; the unscoped upstream package is not replaced.
+The npm package and GitHub tarball both use the fork identity `@fadhelhaidar/pi-plannotator-compact`; the unscoped upstream package is not replaced.
 
 Update configured extensions after a release:
 
 ```bash
 pi update --extensions
 # Or update only this source:
-pi update npm:@fadhelhaidar/plannotator-pi-ct
+pi update npm:@fadhelhaidar/pi-plannotator-compact
 # Or update the tarball source:
-pi update 'npm:@fadhelhaidar/plannotator-pi-ct@https://github.com/FadhelHaidar/plannotator-pi-ct/releases/latest/download/plannotator-pi-extension.tgz'
+pi update 'npm:@fadhelhaidar/pi-plannotator-compact@https://github.com/FadhelHaidar/pi-plannotator-compact/releases/latest/download/plannotator-pi-extension.tgz'
 ```
 
 Restart Pi or run `/reload`. Pi does not poll this repository for releases; a plain `pi update` updates Pi itself, not extensions. To remove this distribution, use the same source string:
 
 ```bash
-pi remove npm:@fadhelhaidar/plannotator-pi-ct
+pi remove npm:@fadhelhaidar/pi-plannotator-compact
 # For the tarball source, use its exact configured URL instead.
 ```
 
 ### Migrate from the old fork or upstream
 
-Do not load two copies with the same commands. Stop Pi, remove the old source, then install the new source above and restart. For example:
+Do not load two copies with the same commands. Stop Pi, remove the old source, then install the new source above and restart. If you previously installed this project under its old npm name, remove that configured source with:
+
+```bash
+pi remove npm:@fadhelhaidar/plannotator-pi-ct
+```
+
+For example, remove an older fork release URL with:
 
 ```bash
 # Old compact-plan-tracker release URL:
@@ -62,8 +68,8 @@ See [the complete extension usage/configuration reference](apps/pi-extension/REA
 Use Node **22+**, npm, **Bun 1.3.14** (the release/test version), bash, git, and network access. Bun 1.4.2 can build but changes Node HTTP listener behavior in the inherited network tests; use the pinned version for reproducible tests. Vite builds large inlined browser assets and need sufficient memory.
 
 ```bash
-git clone https://github.com/FadhelHaidar/plannotator-pi-ct.git
-cd plannotator-pi-ct
+git clone https://github.com/FadhelHaidar/pi-plannotator-compact.git
+cd pi-plannotator-compact
 npm run install:dev
 bun run build:pi
 ```
@@ -82,7 +88,7 @@ pi install ./apps/pi-extension
 Git-source installation is also available; it runs the full source bootstrap/build in postinstall and therefore needs Node, Bun, bash, network and lifecycle scripts:
 
 ```bash
-pi install git:github.com/FadhelHaidar/plannotator-pi-ct
+pi install git:github.com/FadhelHaidar/pi-plannotator-compact
 ```
 
 If interrupted, first ensure no bootstrap is still running, restore `package.json` from Git if it still contains the temporary workspace list, and remove `.pi-source-install.lock`. Rerun `npm run install:dev` and `bun run build:pi`. Do not delete a lock held by a live install.
@@ -120,17 +126,14 @@ This is an independent **`vX.Y.Z`** release series. The old fork's last CT versi
 | conventional header with `!` or `BREAKING CHANGE:` / `BREAKING-CHANGE:` footer | major (including `0.x`) |
 | `chore`, `docs`, `test`, `ci`, `build`, `style`, `refactor`, other maintenance | no release |
 
-The release workflow builds from source, tests Pi/typecheck/extraction seams, packs the extension, checks the archive and isolated discovery, then publishes the same versioned package to npm as `@fadhelhaidar/plannotator-pi-ct` and uploads **`plannotator-pi-extension.tgz`** to a stable GitHub Release tagged `v<version>`. It does not commit version churn back to main. Keep release tags on main history; checked-in versions are the first-release baseline, not the authoritative latest released version.
+The release workflow builds from source, tests Pi/typecheck/extraction seams, packs the extension, checks the archive and isolated discovery, then publishes the same versioned package to npm as `@fadhelhaidar/pi-plannotator-compact` and uploads **`plannotator-pi-extension.tgz`** to a stable GitHub Release tagged `v<version>`. It does not commit version churn back to main. Keep release tags on main history; checked-in versions are the first-release baseline, not the authoritative latest released version.
 
-For the repository owner (not performed by extraction):
+To bootstrap the renamed npm package:
 
-1. Create the dedicated GitHub repository, set default branch `main`, and add its remote to this independent local repository.
-2. Enable Actions, permit `GITHUB_TOKEN` to create releases (`contents: write` is scoped to the release job), and allow third-party actions per your organization policy. npm publishing needs **no token**: the `publish-npm` job authenticates with npm trusted publishing (GitHub OIDC). Register the trusted publisher on npmjs.com for `@fadhelhaidar/plannotator-pi-ct`: GitHub Actions, repository `FadhelHaidar/plannotator-pi-ct`, workflow `pi-extension-release.yml`.
-3. Publish the first version once by hand (`npm publish` from `apps/pi-extension`), because npm cannot create a brand-new package through OIDC — the trusted publisher is configured on a package that already exists.
-4. Push `main` **without precreating `v0.1.1`** or importing old CT tags. The no-tag bootstrap targets the checked-in Pi version (`0.1.1`); if npm already has that version the workflow skips the npm publish and reports it, and pre-tagging the same commit would leave no release-worthy commits.
-5. Review the successful workflow, npm package and first release/tarball, then test both install sources. Subsequent release-worthy main commits advance the version series and publish through OIDC; maintenance-only ranges do not release.
-
-No remote, push, settings change or publication is part of this local extraction.
+1. Build and check the package from a clean checkout, then publish once by hand (`npm publish --access public` from `apps/pi-extension`). npm cannot create a brand-new package through OIDC. The previous package name is a separate npm package; it is not renamed automatically.
+2. Register the trusted publisher on npmjs.com for `@fadhelhaidar/pi-plannotator-compact`: GitHub Actions, repository `FadhelHaidar/pi-plannotator-compact`, workflow `pi-extension-release.yml`. Subsequent publishing uses GitHub OIDC without an npm token.
+3. Keep the existing release tags. Renaming the repository does not reset the version series; maintenance-only commits do not trigger a release. Subsequent release-worthy main commits advance the version and publish under the new name.
+4. Check the published npm package and test installation before retiring the old package. Existing GitHub Release tarballs still contain their original package name until replaced by a new release.
 
 ## Origin, licenses and upstream porting
 

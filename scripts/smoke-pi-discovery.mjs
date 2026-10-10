@@ -47,11 +47,11 @@ if (process.argv[2] === '--discover') {
   }
   try {
     const piCli = join(piRoot, piManifest.bin.pi);
-    const source = `npm:@fadhelhaidar/plannotator-pi-ct@file:${archive}`;
+    const source = `npm:@fadhelhaidar/pi-plannotator-compact@file:${archive}`;
     run([piCli, 'install', source]);
     const settings = JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8'));
     assert(settings.packages.includes(source), 'Pi did not save the named tarball source');
-    run([script, '--discover', join(agentDir, 'npm/node_modules/@fadhelhaidar/plannotator-pi-ct')]);
+    run([script, '--discover', join(agentDir, 'npm/node_modules/@fadhelhaidar/pi-plannotator-compact')]);
     run([piCli, 'remove', source]);
     const removed = JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8'));
     assert(!removed.packages?.includes(source), 'Pi did not remove the tarball source');

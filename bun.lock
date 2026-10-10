@@ -45,7 +45,7 @@
       },
     },
     "apps/pi-extension": {
-      "name": "@fadhelhaidar/plannotator-pi-ct",
+      "name": "@fadhelhaidar/pi-plannotator-compact",
       "version": "0.1.1",
       "dependencies": {
         "@joplin/turndown-plugin-gfm": "^1.0.64",
@@ -441,7 +441,7 @@
 
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.25.12", "", { "os": "win32", "cpu": "x64" }, "sha512-alJC0uCZpTFrSL0CCDjcgleBXPnCrEAhTBILpeAp7M/OFgoqtAetfBzX0xM00MUsVVPpVjlPuMbREqnZCXaTnA=="],
 
-    "@fadhelhaidar/plannotator-pi-ct": ["@fadhelhaidar/plannotator-pi-ct@workspace:apps/pi-extension"],
+    "@fadhelhaidar/pi-plannotator-compact": ["@fadhelhaidar/pi-plannotator-compact@workspace:apps/pi-extension"],
 
     "@floating-ui/core": ["@floating-ui/core@1.8.0", "", { "dependencies": { "@floating-ui/utils": "^0.2.12" } }, "sha512-0CIZ5itps/8x7BG8dEIhs53BvCUH2PCoogtakwRTut+Arm58sJooJ0AuZhLw2HJYIR5cMLNPBSS728sPho2khQ=="],
 

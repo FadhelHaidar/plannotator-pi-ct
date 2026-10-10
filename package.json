@@ -1,5 +1,5 @@
 {
-  "name": "plannotator-pi-ct",
+  "name": "pi-plannotator-compact",
   "version": "0.1.1",
   "private": true,
   "description": "Standalone Plannotator compact-tracker extension for Pi",
@@ -7,7 +7,7 @@
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/FadhelHaidar/plannotator-pi-ct.git"
+    "url": "git+https://github.com/FadhelHaidar/pi-plannotator-compact.git"
   },
   "homepage": "https://github.com/backnotprop/plannotator",
   "bugs": {

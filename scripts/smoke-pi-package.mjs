@@ -11,7 +11,7 @@ import ts from 'typescript';
 
 export function checkPackage(root) {
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-  assert.equal(manifest.name, '@fadhelhaidar/plannotator-pi-ct');
+  assert.equal(manifest.name, '@fadhelhaidar/pi-plannotator-compact');
   assert.deepEqual(manifest.pi.extensions, ['./index.ts']);
   const required = ['index.ts', 'server.ts', 'server/serverAnnotate.ts', 'server/serverReview.ts',
     'progress-widget.ts', 'auto-keymap.ts', 'skills/plannotator/SKILL.md',
