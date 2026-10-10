@@ -9,9 +9,9 @@
     "type": "git",
     "url": "git+https://github.com/FadhelHaidar/pi-plannotator-compact.git"
   },
-  "homepage": "https://github.com/backnotprop/plannotator",
+  "homepage": "https://github.com/FadhelHaidar/pi-plannotator-compact",
   "bugs": {
-    "url": "https://github.com/backnotprop/plannotator/issues"
+    "url": "https://github.com/FadhelHaidar/pi-plannotator-compact/issues"
   },
   "scripts": {
     "postinstall": "node scripts/install-pi-source.mjs",
